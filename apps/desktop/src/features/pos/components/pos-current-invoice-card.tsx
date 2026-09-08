@@ -96,7 +96,7 @@ type PosCurrentInvoiceCardProps = {
   onPrintShiftReport: () => void;
   onStartNewShift: () => void;
   onOpenSettings: () => void;
-  onOpenStockIncrease: () => void;
+  onOpenStockIncrease?: () => void;
   onHoldCart: () => void;
   onRestoreHeldCart: (heldCartId: string) => void;
   onClearCart: () => void;
@@ -260,10 +260,12 @@ export function PosCurrentInvoiceCard({
               <RefreshCcw className="size-4" />
               بروزرسانی دیتا
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={onOpenStockIncrease}>
-              <PackagePlus className="size-4" />
-              افزایش موجودی جنس
-            </DropdownMenuItem>
+            {onOpenStockIncrease ? (
+              <DropdownMenuItem onClick={onOpenStockIncrease}>
+                <PackagePlus className="size-4" />
+                افزایش موجودی جنس
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem onClick={() => setMobileDialogOpen(true)}>
               <QrCode className="size-4" />
               اتصال موبایل

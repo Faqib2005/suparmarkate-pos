@@ -192,6 +192,14 @@ async function cleanupFixture(fixture: Fixture) {
     });
     const saleReturnIds = saleReturns.map((saleReturn) => saleReturn.id);
     const referenceIds = [...saleIds, ...saleReturnIds];
+    const inventoryOperationIds = (
+      await prisma.stockMovement.findMany({
+        where: { referenceId: { in: referenceIds }, operationId: { not: null } },
+        select: { operationId: true }
+      })
+    )
+      .map((movement) => movement.operationId)
+      .filter((operationId): operationId is string => Boolean(operationId));
 
     await prisma.auditLog.deleteMany({
       where: { entityId: { in: referenceIds } }
@@ -206,6 +214,11 @@ async function cleanupFixture(fixture: Fixture) {
     await prisma.stockMovement.deleteMany({
       where: { referenceId: { in: referenceIds } }
     });
+    if (inventoryOperationIds.length > 0) {
+      await prisma.inventoryOperation.deleteMany({
+        where: { id: { in: inventoryOperationIds } }
+      });
+    }
     await prisma.saleReturn.deleteMany({ where: { id: { in: saleReturnIds } } });
     await prisma.sale.deleteMany({ where: { id: { in: saleIds } } });
   }

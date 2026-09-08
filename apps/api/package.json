@@ -13,6 +13,7 @@
     "test:stock-stress": "vitest run --config vitest.stock-stress.config.ts",
     "integrity:audit": "tsx src/scripts/integrity-audit.ts",
     "integrity:compare": "tsx src/scripts/compare-integrity.ts",
+    "inventory:forensics:compare": "tsx src/scripts/compare-inventory-forensics.ts",
     "release:manifest": "tsx src/scripts/create-release-manifest.ts",
     "prisma": "prisma",
     "seed": "tsx src/seed.ts",

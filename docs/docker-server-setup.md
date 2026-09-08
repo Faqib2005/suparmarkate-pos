@@ -69,3 +69,53 @@ docker compose down
 ```
 
 Backups and server config are stored in Docker volumes, so they survive container restart/rebuild.
+
+# Install A Separate Test Instance
+
+The normal install command remains unchanged and continues to use the existing
+customer containers, volumes, `.env` file, and ports `4000`, `4001`, and `4002`.
+
+To install a second isolated copy of the same server on one Windows computer,
+run this command from that copy's extracted project directory:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/windows/install-server.ps1 `
+  -ProjectName muhaseb-test `
+  -ApiPort 5000 `
+  -PosWebSocketPort 5001 `
+  -SystemHealthWebSocketPort 5002 `
+  -PostgresPort 55432 `
+  -RedisPort 56379 `
+  -ConfirmStableIp
+```
+
+The same parameters can be passed through the existing npm command:
+
+```powershell
+npm run server:install -- `
+  -ProjectName muhaseb-test `
+  -ApiPort 5000 `
+  -PosWebSocketPort 5001 `
+  -SystemHealthWebSocketPort 5002 `
+  -PostgresPort 55432 `
+  -RedisPort 56379 `
+  -ConfirmStableIp
+```
+
+This creates an isolated `.env.muhaseb-test`, containers named
+`muhaseb-test-postgres`, `muhaseb-test-redis`, and `muhaseb-test-api`, separate
+Compose volumes, and the backup folder `D:\BelalBackups\muhaseb-test`. Connect
+test clients to `http://SERVER-IP:5000`.
+
+Always identify the project and environment file when managing the test copy:
+
+```powershell
+docker compose -p muhaseb-test --env-file .env.muhaseb-test ps
+docker compose -p muhaseb-test --env-file .env.muhaseb-test logs -f api
+docker compose -p muhaseb-test --env-file .env.muhaseb-test stop
+docker compose -p muhaseb-test --env-file .env.muhaseb-test start
+```
+
+Never use `docker compose down -v` on either installation. The `-v` option
+deletes that project's database and file volumes. Before restoring a customer
+backup, verify both the Compose project name and its environment file.

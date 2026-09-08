@@ -116,6 +116,11 @@ export const routePolicies: RoutePolicy[] = [
     write: anyOf("purchases.manage"),
   },
   {
+    prefix: "/api/inventory-verifications",
+    read: anyOf("inventory.manage"),
+    write: anyOf("inventory.manage"),
+  },
+  {
     prefix: "/api/inventory/product-history",
     read: anyOf("inventory.view", "inventory.manage"),
     write: anyOf("inventory.manage"),

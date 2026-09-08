@@ -14,6 +14,11 @@ export type StartInventoryOperationInput = {
   clientRequestId?: string | null;
   occurredAt?: Date | null;
   createdByUserId?: string | null;
+  sourceChannel?: string | null;
+  sourceDeviceCode?: string | null;
+  appVersion?: string | null;
+  correlationId?: string | null;
+  requestIp?: string | null;
 };
 
 function targetKey(target: InventoryTarget) {
@@ -103,6 +108,11 @@ export class InventoryMutationService {
         type: input.type,
         occurredAt: input.occurredAt ?? new Date(),
         createdByUserId: input.createdByUserId ?? null,
+        sourceChannel: input.sourceChannel ?? null,
+        sourceDeviceCode: input.sourceDeviceCode ?? null,
+        appVersion: input.appVersion ?? null,
+        correlationId: input.correlationId ?? null,
+        requestIp: input.requestIp ?? null,
       },
     });
   }

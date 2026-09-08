@@ -1,9 +1,21 @@
 param(
   [string]$ProjectDir = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
+  [string]$ProjectName = "",
+  [string]$EnvironmentFile = "",
+  [string]$PostgresContainerName = "",
+  [string]$RedisContainerName = "",
+  [string]$ApiContainerName = "",
+  [ValidateRange(1, 65535)]
   [int]$ApiPort = 4000,
+  [ValidateRange(1, 65535)]
   [int]$PosWebSocketPort = 4001,
+  [ValidateRange(1, 65535)]
   [int]$SystemHealthWebSocketPort = 4002,
-  [string]$BackupDir = "D:\BelalBackups",
+  [ValidateRange(1, 65535)]
+  [int]$PostgresPort = 5432,
+  [ValidateRange(1, 65535)]
+  [int]$RedisPort = 6379,
+  [string]$BackupDir = "",
   [string]$LanIp = "",
   [switch]$ReuseImage,
   [switch]$ConfirmStableIp,
@@ -113,9 +125,6 @@ if (-not $lanIp) {
 $lanApiBaseUrl = "http://$lanIp`:$ApiPort"
 $lanWebUrl = $lanApiBaseUrl
 $env:MUHASEB_CURRENT_LAN_IP = $lanIp
-$resolvedBackupDir = [System.IO.Path]::GetFullPath($BackupDir)
-New-Item -ItemType Directory -Force -Path $resolvedBackupDir | Out-Null
-
 function New-RandomHex([int]$ByteCount) {
   $bytes = New-Object byte[] $ByteCount
   $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -162,15 +171,105 @@ function Get-ContainerEnvValue($Container, [string]$Name) {
   return $entry.Substring($prefix.Length)
 }
 
-$existingPostgres = Get-ContainerConfig "muhaseb_postgres"
-$existingApi = Get-ContainerConfig "muhaseb_api"
-$existingComposeProject = if ($existingPostgres) {
-  $existingPostgres.Config.Labels.'com.docker.compose.project'
+$requestedProjectName = $ProjectName.Trim().ToLowerInvariant()
+$legacyPostgres = if (-not $requestedProjectName -or $requestedProjectName -eq "muhaseb-server-docker") {
+  Get-ContainerConfig "muhaseb_postgres"
 } else {
   $null
 }
-$composeProjectName = if ($existingComposeProject) { $existingComposeProject } else { "muhaseb-server-docker" }
+$existingComposeProject = if ($legacyPostgres) {
+  $legacyPostgres.Config.Labels.'com.docker.compose.project'
+} else {
+  $null
+}
+$composeProjectName = if ($requestedProjectName) {
+  $requestedProjectName
+} elseif ($existingComposeProject) {
+  $existingComposeProject
+} else {
+  "muhaseb-server-docker"
+}
+if ($composeProjectName -notmatch '^[a-z0-9][a-z0-9_-]*$') {
+  throw "ProjectName must contain only lowercase letters, numbers, dashes or underscores: $composeProjectName"
+}
+
+$safeProjectName = $composeProjectName -replace '[^a-z0-9_-]', '-'
+$useLegacyContainerNames = -not $requestedProjectName -or $composeProjectName -eq "muhaseb-server-docker"
+$postgresContainer = if ($PostgresContainerName.Trim()) {
+  $PostgresContainerName.Trim()
+} elseif ($useLegacyContainerNames) {
+  "muhaseb_postgres"
+} else {
+  "$safeProjectName-postgres"
+}
+$redisContainer = if ($RedisContainerName.Trim()) {
+  $RedisContainerName.Trim()
+} elseif ($useLegacyContainerNames) {
+  "muhaseb_redis"
+} else {
+  "$safeProjectName-redis"
+}
+$apiContainer = if ($ApiContainerName.Trim()) {
+  $ApiContainerName.Trim()
+} elseif ($useLegacyContainerNames) {
+  "muhaseb_api"
+} else {
+  "$safeProjectName-api"
+}
+foreach ($containerName in @($postgresContainer, $redisContainer, $apiContainer)) {
+  if ($containerName -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_.-]+$') {
+    throw "Invalid Docker container name: $containerName"
+  }
+}
+if ((@($postgresContainer, $redisContainer, $apiContainer) | Select-Object -Unique).Count -ne 3) {
+  throw "PostgreSQL, Redis and API container names must be different."
+}
+
+$ports = @($ApiPort, $PosWebSocketPort, $SystemHealthWebSocketPort, $PostgresPort, $RedisPort)
+if (($ports | Select-Object -Unique).Count -ne $ports.Count) {
+  throw "API, WebSocket, PostgreSQL and Redis host ports must be different."
+}
+
+$existingPostgres = Get-ContainerConfig $postgresContainer
+$existingApi = Get-ContainerConfig $apiContainer
+$composeEnvPath = if ($EnvironmentFile.Trim()) {
+  if ([System.IO.Path]::IsPathRooted($EnvironmentFile)) {
+    [System.IO.Path]::GetFullPath($EnvironmentFile)
+  } else {
+    [System.IO.Path]::GetFullPath((Join-Path $ProjectDir $EnvironmentFile))
+  }
+} elseif ($requestedProjectName -and $composeProjectName -ne "muhaseb-server-docker") {
+  Join-Path $ProjectDir ".env.$safeProjectName"
+} else {
+  Join-Path $ProjectDir ".env"
+}
+$primaryEnvPath = [System.IO.Path]::GetFullPath((Join-Path $ProjectDir ".env"))
+if (-not $useLegacyContainerNames -and $composeEnvPath -eq $primaryEnvPath) {
+  throw "A separate instance cannot use the primary .env file. Omit EnvironmentFile or use a distinct file such as .env.$safeProjectName."
+}
+$composeEnvDirectory = Split-Path -Parent $composeEnvPath
+if ($composeEnvDirectory) {
+  New-Item -ItemType Directory -Force -Path $composeEnvDirectory | Out-Null
+}
+$backupPath = if ($BackupDir.Trim()) {
+  $BackupDir
+} elseif ($requestedProjectName -and $composeProjectName -ne "muhaseb-server-docker") {
+  Join-Path "D:\BelalBackups" $safeProjectName
+} else {
+  "D:\BelalBackups"
+}
+$resolvedBackupDir = [System.IO.Path]::GetFullPath($backupPath)
+New-Item -ItemType Directory -Force -Path $resolvedBackupDir | Out-Null
+
 $env:COMPOSE_PROJECT_NAME = $composeProjectName
+$env:POSTGRES_CONTAINER_NAME = $postgresContainer
+$env:REDIS_CONTAINER_NAME = $redisContainer
+$env:API_CONTAINER_NAME = $apiContainer
+$env:HOST_API_PORT = [string]$ApiPort
+$env:HOST_POS_WS_PORT = [string]$PosWebSocketPort
+$env:HOST_SYSTEM_HEALTH_WS_PORT = [string]$SystemHealthWebSocketPort
+$env:HOST_POSTGRES_PORT = [string]$PostgresPort
+$env:HOST_REDIS_PORT = [string]$RedisPort
 
 $existingPostgresUser = Get-ContainerEnvValue $existingPostgres "POSTGRES_USER"
 $existingPostgresDb = Get-ContainerEnvValue $existingPostgres "POSTGRES_DB"
@@ -179,7 +278,6 @@ $existingSeedAdminUsername = Get-ContainerEnvValue $existingApi "SEED_ADMIN_USER
 $existingSeedAdminPassword = Get-ContainerEnvValue $existingApi "SEED_ADMIN_PASSWORD"
 $fixedDatabasePassword = "supermarket_password"
 
-$composeEnvPath = Join-Path $ProjectDir ".env"
 if (-not (Test-Path $composeEnvPath)) {
   $jwtBytes = New-Object byte[] 48
   $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -197,6 +295,14 @@ if (-not (Test-Path $composeEnvPath)) {
 
   @"
 COMPOSE_PROJECT_NAME=$composeProjectName
+POSTGRES_CONTAINER_NAME=$postgresContainer
+REDIS_CONTAINER_NAME=$redisContainer
+API_CONTAINER_NAME=$apiContainer
+HOST_API_PORT=$ApiPort
+HOST_POS_WS_PORT=$PosWebSocketPort
+HOST_SYSTEM_HEALTH_WS_PORT=$SystemHealthWebSocketPort
+HOST_POSTGRES_PORT=$PostgresPort
+HOST_REDIS_PORT=$RedisPort
 POSTGRES_USER=$postgresUser
 POSTGRES_PASSWORD=$databasePassword
 POSTGRES_DB=$postgresDb
@@ -227,6 +333,14 @@ BACKUP_SECOND_DISK_CONFIRMED=$($ConfirmSeparateBackupDisk.IsPresent.ToString().T
   }
 } else {
   Set-EnvFileValue $composeEnvPath "COMPOSE_PROJECT_NAME" $composeProjectName
+  Set-EnvFileValue $composeEnvPath "POSTGRES_CONTAINER_NAME" $postgresContainer
+  Set-EnvFileValue $composeEnvPath "REDIS_CONTAINER_NAME" $redisContainer
+  Set-EnvFileValue $composeEnvPath "API_CONTAINER_NAME" $apiContainer
+  Set-EnvFileValue $composeEnvPath "HOST_API_PORT" ([string]$ApiPort)
+  Set-EnvFileValue $composeEnvPath "HOST_POS_WS_PORT" ([string]$PosWebSocketPort)
+  Set-EnvFileValue $composeEnvPath "HOST_SYSTEM_HEALTH_WS_PORT" ([string]$SystemHealthWebSocketPort)
+  Set-EnvFileValue $composeEnvPath "HOST_POSTGRES_PORT" ([string]$PostgresPort)
+  Set-EnvFileValue $composeEnvPath "HOST_REDIS_PORT" ([string]$RedisPort)
   Set-EnvFileValue $composeEnvPath "POSTGRES_PASSWORD" $fixedDatabasePassword
   if ($existingPostgresUser) {
     Set-EnvFileValue $composeEnvPath "POSTGRES_USER" $existingPostgresUser
@@ -286,12 +400,21 @@ Write-Host "Muhaseb LAN API URL: $lanApiBaseUrl"
 Write-Host "Muhaseb LAN Web URL: $lanWebUrl"
 Write-Host "Muhaseb backup folder: $resolvedBackupDir"
 Write-Host "Muhaseb Docker project: $composeProjectName"
+Write-Host "Muhaseb environment file: $composeEnvPath"
+Write-Host "Muhaseb containers: $postgresContainer, $redisContainer, $apiContainer"
 
 Write-Host "Configuring Windows Firewall for Muhaseb LAN ports..."
 & (Join-Path $PSScriptRoot "configure-firewall.ps1") `
   -ApiPort $ApiPort `
   -PosWebSocketPort $PosWebSocketPort `
-  -SystemHealthWebSocketPort $SystemHealthWebSocketPort
+  -SystemHealthWebSocketPort $SystemHealthWebSocketPort `
+  -InstanceName $(if ($useLegacyContainerNames) { "" } else { $composeProjectName })
+
+$composeArgs = @(
+  "compose",
+  "--project-name", $composeProjectName,
+  "--env-file", $composeEnvPath
+)
 
 Write-Host ""
 Write-Host "Starting Muhaseb server stack with Docker Compose..."
@@ -315,44 +438,50 @@ if (Test-Path $imageArchivePath) {
     Write-Host "Reusing the installed Muhaseb API image for startup."
   } else {
     Write-Host "No prebuilt API image found. Building Muhaseb API image locally..."
-    docker compose build --pull --no-cache api
+    & docker @composeArgs build --pull --no-cache api
     $buildExitCode = $LASTEXITCODE
     if ($buildExitCode -ne 0) {
       Write-Host ""
       Write-Host "Docker image build failed. Recent container state:"
-      docker compose ps
+      & docker @composeArgs ps
       exit $buildExitCode
     }
   }
 }
 
-docker compose up -d --wait postgres redis
+& docker @composeArgs up -d --wait postgres redis
 $composeExitCode = $LASTEXITCODE
 if ($composeExitCode -ne 0) {
   Write-Host ""
   Write-Host "Docker Compose failed before the API could start. Recent container state:"
-  docker compose ps
+  & docker @composeArgs ps
   Write-Host ""
   Write-Host "Try restarting Docker Desktop. If Docker reports a missing snapshot, remove the local API image/cache and run this script again."
   exit $composeExitCode
 }
 
 Write-Host "Synchronizing the Muhaseb database credential..."
-$databaseCredentialSql = "ALTER ROLE supermarket WITH PASSWORD '$fixedDatabasePassword';"
-$databaseCredentialSql | docker compose exec -T postgres `
-  psql --username supermarket --dbname supermarket_db --set ON_ERROR_STOP=on
+$composeEnvContent = Get-Content $composeEnvPath -Raw
+$postgresUser = Get-EnvFileValue $composeEnvContent "POSTGRES_USER"
+$postgresDb = Get-EnvFileValue $composeEnvContent "POSTGRES_DB"
+if (-not $postgresUser) { $postgresUser = "supermarket" }
+if (-not $postgresDb) { $postgresDb = "supermarket_db" }
+$safePostgresRole = $postgresUser.Replace('"', '""')
+$databaseCredentialSql = "ALTER ROLE `"$safePostgresRole`" WITH PASSWORD '$fixedDatabasePassword';"
+$databaseCredentialSql | & docker @composeArgs exec -T postgres `
+  psql --username $postgresUser --dbname $postgresDb --set ON_ERROR_STOP=on
 $credentialExitCode = $LASTEXITCODE
 if ($credentialExitCode -ne 0) {
   Write-Host "Failed to synchronize the PostgreSQL credential. The API was not started."
   exit $credentialExitCode
 }
 
-docker compose up -d --wait api
+& docker @composeArgs up -d --wait api
 $apiExitCode = $LASTEXITCODE
 if ($apiExitCode -ne 0) {
   Write-Host ""
   Write-Host "Muhaseb API failed to start after PostgreSQL became healthy. Recent API logs:"
-  docker compose logs --tail=80 api
+  & docker @composeArgs logs --tail=80 api
   exit $apiExitCode
 }
 
@@ -365,7 +494,7 @@ do {
     if ($health.status -eq "ok") {
       if (-not $health.redis.connected) {
         Write-Warning "API is running, but Redis health is not connected."
-        docker compose ps
+        & docker @composeArgs ps
         exit 1
       }
       Write-Host "Muhaseb API is ready: http://127.0.0.1:$ApiPort"
@@ -378,5 +507,5 @@ do {
 } while ((Get-Date) -lt $deadline)
 
 Write-Host "API was not healthy before timeout. Showing recent logs..."
-docker compose logs --tail=80 api
+& docker @composeArgs logs --tail=80 api
 exit 1

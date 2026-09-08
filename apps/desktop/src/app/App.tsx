@@ -351,6 +351,16 @@ function installAuthenticatedFetch() {
       headers.set("Authorization", `Bearer ${token}`);
     }
 
+    if (!headers.has("x-client-channel")) {
+      headers.set(
+        "x-client-channel",
+        navigator.userAgent.includes("Electron") ? "ELECTRON" : "WEB",
+      );
+    }
+    if (!headers.has("x-app-version")) {
+      headers.set("x-app-version", import.meta.env.VITE_APP_VERSION || "desktop-dev");
+    }
+
     let deviceCode = localStorage.getItem(POS_DEVICE_CODE_KEY);
     if (!deviceCode) {
       deviceCode = `POS-${createClientId()}`;
@@ -390,6 +400,10 @@ function installAuthenticatedFetch() {
         persistRecentMutationOperations();
         headers.set("Idempotency-Key", operationId);
         headers.set("X-Idempotency-Payload-Hash", payloadHash);
+      }
+
+      if (!headers.has("x-correlation-id") && headers.has("Idempotency-Key")) {
+        headers.set("x-correlation-id", headers.get("Idempotency-Key")!);
       }
 
       const response = originalFetch(input, { ...init, method, headers });
@@ -954,7 +968,17 @@ function App() {
                 </Suspense>
               }
             />
-            <Route path="/pos" element={<PosPage />} />
+            <Route
+              path="/pos"
+              element={
+                <PosPage
+                  canManageInventory={
+                    auth.user.role === "Admin" ||
+                    auth.user.permissions.includes("inventory.manage")
+                  }
+                />
+              }
+            />
             <Route path="/sales" element={<SalesPage />} />
             <Route path="/accounting" element={<AccountingPage apiBaseUrl={API_BASE_URL} />} />
             <Route

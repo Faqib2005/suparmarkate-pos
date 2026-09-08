@@ -26,7 +26,7 @@ describe("integrity audit database integration", () => {
       FROM "MoneyTransaction"
     `;
 
-    expect(report.database.name).toBe("supermarket_test");
+    expect(report.database.name).toMatch(/(?:^|_)supermarket_test$/);
     expect(report.summary.status).toBe("pass");
     expect(after[0]?.transactions).toBe(before[0]?.transactions);
   });

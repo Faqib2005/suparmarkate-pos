@@ -9,7 +9,10 @@ export default defineConfig({
     clearMocks: true,
     mockReset: true,
     fileParallelism: false,
-    testTimeout: 20 * 60_000,
+    testTimeout: Math.max(
+      20 * 60_000,
+      Number(process.env.STOCK_STRESS_TEST_TIMEOUT_MS || 20 * 60_000),
+    ),
     hookTimeout: 2 * 60_000
   }
 });

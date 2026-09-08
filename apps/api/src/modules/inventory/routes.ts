@@ -3,7 +3,7 @@ import { z } from "zod";
 import { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma";
 import { zodError } from "../../lib/api";
-import { getAuthUser, writeAudit } from "../../lib/auth";
+import { getAuthUser, hasPermission, writeAudit } from "../../lib/auth";
 import { resolveCurrencySnapshot, roundMoney } from "../../lib/currency-rates";
 import { StockMovementType } from "../../generated/prisma/enums";
 import { createPaginationMeta, getPagePagination } from "../../lib/pagination";
@@ -16,6 +16,8 @@ import {
   InventoryMutationService,
   requestOperationId
 } from "../../lib/inventory-mutation";
+import { inventoryOperationEvidence } from "../../lib/request-evidence";
+import { createPostedJournal, createReversalJournal } from "../../lib/journal";
 import {
   kabulDateKey,
   kabulDateRange,
@@ -916,8 +918,21 @@ inventoryRoute.post("/movements/:id/cancel", async (c) => {
         cancelledByUserId: authUser?.id,
         occurredAt: kabulNow()
       });
+      const journalEntry =
+        current.type === StockMovementType.ADJUSTMENT_IN
+          ? await createReversalJournal(tx, {
+              sourceType: "INVENTORY_ADJUSTMENT_IN",
+              sourceId: current.operationId,
+              reversalSourceType: "INVENTORY_ADJUSTMENT_IN_CANCEL",
+              reversalSourceId: current.operationId,
+              entryNoPrefix: "JE-INV-IN-CANCEL",
+              description: `Inventory adjustment cancellation ${current.operationId}`,
+              createdByUserId: authUser?.id || null
+            })
+          : null;
       return {
-        operation: cancelled
+        operation: cancelled,
+        journalEntry
       };
     }
 
@@ -1256,6 +1271,7 @@ inventoryRoute.post("/opening-stock", async (c) => {
       }
     ]);
     const operation = await inventory.startOperation({
+      ...inventoryOperationEvidence(c),
       type: "OPENING_STOCK",
       clientRequestId,
       occurredAt,
@@ -1483,6 +1499,9 @@ inventoryRoute.patch("/opening-stock/:movementId", async (c) => {
 
 inventoryRoute.post("/adjustments", async (c) => {
   const authUser = getAuthUser(c);
+  if (!hasPermission(authUser, "inventory.manage")) {
+    return c.json({ message: "Permission required: inventory.manage" }, 403);
+  }
   const body = await c.req.json().catch(() => null);
   const parsed = adjustmentSchema.safeParse(body);
 
@@ -1557,6 +1576,24 @@ inventoryRoute.post("/adjustments", async (c) => {
     }
 
     const result = await prisma.$transaction(async (tx) => {
+      await acquireTransactionLock(tx, "product-definition", parsed.data.productId);
+      const lockedProduct = await tx.product.findUnique({
+        where: { id: parsed.data.productId },
+        include: { units: true, baseUnit: true }
+      });
+      if (!lockedProduct) {
+        throw new Error("Product not found");
+      }
+      const lockedUnitConversion = resolveProductUnitConversion(
+        lockedProduct,
+        parsed.data.unitId
+      );
+      const lockedQuantityBase = roundStockQuantity(
+        parsed.data.quantity * lockedUnitConversion.conversionRate
+      );
+      const lockedUnitCostBase = roundMoney(
+        Number(parsed.data.unitCost || 0) / lockedUnitConversion.conversionRate
+      );
       const inventory = new InventoryMutationService(tx);
       await inventory.prepare([
         {
@@ -1565,6 +1602,7 @@ inventoryRoute.post("/adjustments", async (c) => {
         }
       ]);
       const operation = await inventory.startOperation({
+        ...inventoryOperationEvidence(c),
         type: "ADJUSTMENT_IN",
         clientRequestId,
         occurredAt,
@@ -1575,16 +1613,16 @@ inventoryRoute.post("/adjustments", async (c) => {
           productId: parsed.data.productId,
           warehouseId: parsed.data.warehouseId,
           expiryDate,
-          initialQuantity: quantityBase,
-          remainingQuantity: quantityBase,
-          unitCost: unitCostBase,
+          initialQuantity: lockedQuantityBase,
+          remainingQuantity: lockedQuantityBase,
+          unitCost: lockedUnitCostBase,
           currencyId: parsed.data.currencyId ?? null,
           exchangeRate: stockSnapshot.exchangeRate,
-          baseUnitCost: roundMoney(unitCostBase * stockSnapshot.exchangeRate),
+          baseUnitCost: roundMoney(lockedUnitCostBase * stockSnapshot.exchangeRate),
           sourceType: "ADJUSTMENT_IN",
           note: [
             parsed.data.note ?? null,
-            `واحد ثبت: ${parsed.data.quantity} x ${unitConversion.conversionRate}`
+            `واحد ثبت: ${parsed.data.quantity} x ${lockedUnitConversion.conversionRate}`
           ].filter(Boolean).join(" | ") || null
         }
       });
@@ -1597,22 +1635,68 @@ inventoryRoute.post("/adjustments", async (c) => {
           type: StockMovementType.ADJUSTMENT_IN,
           operationId: operation.id,
           occurredAt,
-          quantity: quantityBase,
-          unitCost: unitCostBase,
+          quantity: lockedQuantityBase,
+          unitCost: lockedUnitCostBase,
           currencyId: parsed.data.currencyId ?? null,
           exchangeRate: stockSnapshot.exchangeRate,
-          baseUnitCost: roundMoney(unitCostBase * stockSnapshot.exchangeRate),
+          baseUnitCost: roundMoney(lockedUnitCostBase * stockSnapshot.exchangeRate),
           referenceType: "ADJUSTMENT",
           referenceId: lot.id,
           note: [
             parsed.data.note ?? null,
-            `واحد ثبت: ${parsed.data.quantity} x ${unitConversion.conversionRate}`
+            `واحد ثبت: ${parsed.data.quantity} x ${lockedUnitConversion.conversionRate}`
           ].filter(Boolean).join(" | ") || null,
           createdByUserId: authUser?.id || null
         }
       });
 
-      return { lot, movement };
+      const inventoryValue = roundMoney(lockedQuantityBase * lockedUnitCostBase);
+      let journalEntry = null;
+      if (inventoryValue > 0) {
+        await tx.accountingAccount.upsert({
+          where: { code: "7000" },
+          update: {},
+          create: {
+            code: "7000",
+            name: "Other Income / عواید سایر",
+            type: "INCOME",
+            isCash: false,
+            isBank: false,
+            isActive: true
+          }
+        });
+        journalEntry = await createPostedJournal(tx, {
+          entryNoPrefix: "JE-INV-IN",
+          sourceType: "INVENTORY_ADJUSTMENT_IN",
+          sourceId: operation.id,
+          description: `Inventory adjustment in ${operation.id}`,
+          createdByUserId: authUser?.id || null,
+          lines: [
+            {
+              accountCode: "1300",
+              debit: inventoryValue,
+              exchangeRate: stockSnapshot.exchangeRate,
+              baseCurrencyId: stockSnapshot.baseCurrencyId,
+              note: parsed.data.note ?? "Inventory adjustment in"
+            },
+            {
+              accountCode: "7000",
+              credit: inventoryValue,
+              exchangeRate: stockSnapshot.exchangeRate,
+              baseCurrencyId: stockSnapshot.baseCurrencyId,
+              note: parsed.data.note ?? "Inventory adjustment gain"
+            }
+          ]
+        });
+      }
+
+      return {
+        lot,
+        movement,
+        journalEntry,
+        quantityBase: lockedQuantityBase,
+        unitConversion: lockedUnitConversion
+      };
     });
 
     await writeAudit(c, {
@@ -1622,10 +1706,10 @@ inventoryRoute.post("/adjustments", async (c) => {
       metadata: {
         productId: parsed.data.productId,
         warehouseId: parsed.data.warehouseId,
-        quantity: quantityBase,
+        quantity: result.quantityBase,
         enteredQuantity: parsed.data.quantity,
-        enteredUnitId: unitConversion.unitId,
-        conversionRate: unitConversion.conversionRate
+        enteredUnitId: result.unitConversion.unitId,
+        conversionRate: result.unitConversion.conversionRate
       }
     });
 
@@ -1646,6 +1730,7 @@ inventoryRoute.post("/adjustments", async (c) => {
       }
     ]);
     const operation = await inventory.startOperation({
+      ...inventoryOperationEvidence(c),
       type: parsed.data.type,
       clientRequestId,
       occurredAt,
@@ -1803,6 +1888,7 @@ inventoryRoute.post("/transfers", async (c) => {
       }
     ]);
     const operation = await inventory.startOperation({
+      ...inventoryOperationEvidence(c),
       type: "TRANSFER",
       clientRequestId,
       occurredAt,

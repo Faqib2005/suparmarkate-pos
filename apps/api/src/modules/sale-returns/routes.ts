@@ -25,6 +25,7 @@ import {
   InventoryMutationService,
   requestOperationId
 } from "../../lib/inventory-mutation";
+import { inventoryOperationEvidence } from "../../lib/request-evidence";
 import { kabulNow } from "../../lib/kabul-date";
 import { stockDecimal } from "../../lib/stock-quantity";
 
@@ -274,6 +275,13 @@ saleReturnsRoute.post("/", async (c) => {
     const activeReturnItems = saleItem.returnItems.filter(
       (item) => !item.saleReturn.cancelledAt,
     );
+    const requestedUnitQuantity = roundMoney4(requestItem.quantity);
+    const returnedUnitQuantity = roundMoney4(
+      activeReturnItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+    );
+    const availableUnitQuantity = roundMoney4(
+      Number(saleItem.quantity) - returnedUnitQuantity,
+    );
     const requestedQuantityBase = roundMoney4(
       requestItem.quantity * Number(saleItem.conversionRate),
     );
@@ -290,6 +298,7 @@ saleReturnsRoute.post("/", async (c) => {
       Number(saleItem.conversionRate) * 0.00005 + 0.00001,
     );
     const quantityBase =
+      Math.abs(requestedUnitQuantity - availableUnitQuantity) <= 0.0001 ||
       Math.abs(requestedQuantityBase - availableBase) <= unitRoundingTolerance
         ? availableBase
         : requestedQuantityBase;
@@ -452,6 +461,7 @@ saleReturnsRoute.post("/", async (c) => {
       }))
     );
     const inventoryOperation = await inventory.startOperation({
+      ...inventoryOperationEvidence(c),
       type: "SALE_RETURN",
       clientRequestId: inventoryClientRequestId,
       occurredAt: inventoryOccurredAt,

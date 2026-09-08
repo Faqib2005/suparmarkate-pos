@@ -243,6 +243,7 @@ export async function loadProducts(
 
 export async function increaseInventoryFromPos(input: {
   baseUrl: string;
+  operationId: string;
   productId: string;
   warehouseId: string;
   unitId?: string | null;
@@ -256,6 +257,7 @@ export async function increaseInventoryFromPos(input: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "Idempotency-Key": input.operationId,
     },
     body: JSON.stringify({
       type: "ADJUSTMENT_IN",

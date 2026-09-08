@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { ManualDateInput } from "@/components/ui/manual-date-input";
 import { cn } from "@/lib/utils";
 
-import { increaseInventoryFromPos, loadProducts } from "../api";
+import { ApiRequestError, increaseInventoryFromPos, loadProducts } from "../api";
 import type { Currency, ProductSearchItem, Warehouse } from "../types";
 import { money } from "../utils";
 
@@ -46,6 +46,20 @@ function numberValue(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function createInventoryOperationId() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+
+  return `pos-stock-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function priceInCurrency(basePrice: number, currency: Currency | null) {
+  if (!currency || currency.isBase) return numberValue(basePrice);
+  const rate = numberValue(currency.latestRate);
+  return rate > 0 ? numberValue(basePrice) / rate : numberValue(basePrice);
+}
+
 function unitName(unit: ProductUnitSearchItem["unit"]) {
   return unit?.shortName || unit?.name || "واحد";
 }
@@ -67,12 +81,14 @@ function buildUnitOptions(product: ProductSearchItem | null): ProductUnitOption[
   const hasBaseUnit = options.some((item) => item.unitId === baseUnitId);
 
   if (baseUnitId && !hasBaseUnit) {
+    const sourceUnit = options.find((item) => item.isDefaultPurchase) || options[0] || null;
+    const sourceRate = numberValue(sourceUnit?.conversionRate || 1) || 1;
     options.unshift({
       unitId: baseUnitId,
       unitName: product.baseUnit?.shortName || product.baseUnit?.name || "واحد پایه",
       conversionRate: 1,
-      purchasePrice: 0,
-      salePrice: 0,
+      purchasePrice: numberValue(sourceUnit?.purchasePrice) / sourceRate,
+      salePrice: numberValue(sourceUnit?.salePrice) / sourceRate,
       isDefaultPurchase: true,
     });
   }
@@ -113,6 +129,7 @@ export function PosStockIncreaseDialog({
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [saving, setSaving] = useState(false);
   const productRequestAbortRef = useRef<AbortController | null>(null);
+  const operationRef = useRef<{ signature: string; id: string } | null>(null);
 
   const unitOptions = useMemo(
     () => buildUnitOptions(selectedProduct),
@@ -144,7 +161,7 @@ export function PosStockIncreaseDialog({
     const abortController = new AbortController();
     productRequestAbortRef.current = abortController;
 
-    void (async () => {
+    const timer = window.setTimeout(() => void (async () => {
       const search = productSearch.trim();
       if (!search) {
         setProducts((current) => {
@@ -185,9 +202,12 @@ export function PosStockIncreaseDialog({
           setLoadingProducts(false);
         }
       }
-    })();
+    })(), 250);
 
-    return () => abortController.abort();
+    return () => {
+      window.clearTimeout(timer);
+      abortController.abort();
+    };
   }, [apiBaseUrl, initialProducts, open, productSearch, warehouse?.id]);
 
   useEffect(() => {
@@ -195,14 +215,16 @@ export function PosStockIncreaseDialog({
 
     const defaultUnit = defaultUnitForProduct(selectedProduct);
     setUnitId(defaultUnit?.unitId || "");
-    setUnitCost(defaultUnit?.purchasePrice || 0);
+    setUnitCost(priceInCurrency(defaultUnit?.purchasePrice || 0, currency));
     setExpiryDate("");
-  }, [selectedProduct]);
+    operationRef.current = null;
+  }, [selectedProduct, currency]);
 
   function selectUnit(nextUnitId: string) {
     const unit = unitOptions.find((item) => item.unitId === nextUnitId) || null;
     setUnitId(nextUnitId);
-    setUnitCost(unit?.purchasePrice || 0);
+    setUnitCost(priceInCurrency(unit?.purchasePrice || 0, currency));
+    operationRef.current = null;
   }
 
   function resetForm() {
@@ -213,6 +235,7 @@ export function PosStockIncreaseDialog({
     setExpiryDate("");
     setNote("");
     setProductSearch("");
+    operationRef.current = null;
   }
 
   function closeDialog() {
@@ -253,24 +276,52 @@ export function PosStockIncreaseDialog({
       return;
     }
 
+    const request = {
+      productId: selectedProduct.id,
+      warehouseId: warehouse.id,
+      unitId,
+      quantity: numberValue(quantity),
+      unitCost: numberValue(unitCost),
+      currencyId: currency?.id || null,
+      expiryDate: selectedProduct.hasExpiry ? expiryDate || null : null,
+      note: note.trim() || "افزایش موجودی از صفحه فروش سریع",
+    };
+    const signature = JSON.stringify(request);
+    if (operationRef.current?.signature !== signature) {
+      operationRef.current = { signature, id: createInventoryOperationId() };
+    }
+
+    const operationId = operationRef.current.id;
     setSaving(true);
     try {
       await increaseInventoryFromPos({
         baseUrl: apiBaseUrl,
-        productId: selectedProduct.id,
-        warehouseId: warehouse.id,
-        unitId,
-        quantity: numberValue(quantity),
-        unitCost: numberValue(unitCost),
-        currencyId: currency?.id || null,
-        expiryDate: selectedProduct.hasExpiry ? expiryDate || null : null,
-        note: note.trim() || "افزایش موجودی از صفحه فروش سریع",
+        operationId,
+        ...request,
       });
 
       toast.success("موجودی محصول افزایش یافت");
-      await onStockIncreased();
+      operationRef.current = null;
       closeDialog();
+      try {
+        await onStockIncreased();
+      } catch (refreshError) {
+        toast.warning(
+          refreshError instanceof Error
+            ? `موجودی ثبت شد، اما تازه‌سازی لیست ناکام شد: ${refreshError.message}`
+            : "موجودی ثبت شد، اما تازه‌سازی لیست ناکام شد",
+        );
+      }
     } catch (error) {
+      if (
+        error instanceof ApiRequestError &&
+        error.status >= 400 &&
+        error.status < 500 &&
+        error.status !== 408 &&
+        error.status !== 429
+      ) {
+        operationRef.current = null;
+      }
       toast.error(
         error instanceof Error ? error.message : "ثبت افزایش موجودی ناکام شد",
       );
@@ -283,6 +334,7 @@ export function PosStockIncreaseDialog({
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
+        if (!nextOpen && saving) return;
         onOpenChange(nextOpen);
         if (!nextOpen) resetForm();
       }}
@@ -353,7 +405,7 @@ export function PosStockIncreaseDialog({
               <Input
                 type="number"
                 min={0}
-                step="0.001"
+                step="0.0001"
                 value={quantity}
                 onChange={(event) => setQuantity(numberValue(event.target.value))}
                 required
@@ -367,7 +419,7 @@ export function PosStockIncreaseDialog({
               <Input
                 type="number"
                 min={0}
-                step="0.01"
+                step="0.0001"
                 value={unitCost}
                 onChange={(event) => setUnitCost(numberValue(event.target.value))}
                 required

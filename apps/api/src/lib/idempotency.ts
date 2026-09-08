@@ -7,26 +7,23 @@ import { acquireTransactionLock } from "./db-lock";
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const FALLBACK_DEDUPLICATION_MS = Math.max(
   500,
-  Number(process.env.IDEMPOTENCY_FALLBACK_WINDOW_MS || 3_000)
+  Number(process.env.IDEMPOTENCY_FALLBACK_WINDOW_MS || 3_000),
 );
-const RECORD_TTL_DAYS = Math.max(
-  1,
-  Number(process.env.IDEMPOTENCY_RECORD_TTL_DAYS || 30)
-);
+const RECORD_TTL_DAYS = Math.max(1, Number(process.env.IDEMPOTENCY_RECORD_TTL_DAYS || 30));
 const PROCESSING_WAIT_MS = Math.max(
   1_000,
-  Number(process.env.IDEMPOTENCY_PROCESSING_WAIT_MS || 15_000)
+  Number(process.env.IDEMPOTENCY_PROCESSING_WAIT_MS || 15_000),
 );
 const MAX_REPLAY_BODY_BYTES = Math.max(
   64 * 1024,
-  Number(process.env.IDEMPOTENCY_MAX_RESPONSE_BYTES || 2 * 1024 * 1024)
+  Number(process.env.IDEMPOTENCY_MAX_RESPONSE_BYTES || 2 * 1024 * 1024),
 );
 
 const EXCLUDED_PATHS = [
   "/api/auth/",
   "/api/exports/",
   "/api/settings/reset-system",
-  "/api/backups/restore"
+  "/api/backups/restore",
 ];
 
 function isExcludedPath(path: string) {
@@ -38,9 +35,10 @@ function isExcludedPath(path: string) {
 function normalizeUrl(urlValue: string) {
   const url = new URL(urlValue);
   const sorted = new URLSearchParams(
-    [...url.searchParams.entries()].sort(([leftKey, leftValue], [rightKey, rightValue]) =>
-      leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue)
-    )
+    [...url.searchParams.entries()].sort(
+      ([leftKey, leftValue], [rightKey, rightValue]) =>
+        leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue),
+    ),
   );
   return `${url.pathname}${sorted.size ? `?${sorted.toString()}` : ""}`;
 }
@@ -81,7 +79,7 @@ async function createRequestHash(c: Context) {
 
   return {
     requestHash: hash.digest("hex"),
-    path: normalizedUrl
+    path: normalizedUrl,
   };
 }
 
@@ -124,14 +122,14 @@ function replayRecord(record: {
   const headers = new Headers({
     "X-Operation-Id": record.operationKey,
     "Idempotency-Replayed": "true",
-    "Cache-Control": "no-store"
+    "Cache-Control": "no-store",
   });
 
   if (record.status === "COMPLETED" && record.responseBody !== null) {
     if (record.responseContentType) headers.set("Content-Type", record.responseContentType);
     return new Response(record.responseBody, {
       status: record.responseStatus || 200,
-      headers
+      headers,
     });
   }
 
@@ -148,7 +146,7 @@ function replayRecord(record: {
       : record.responseStatus || 409;
   return new Response(JSON.stringify({ message, operationId: record.operationKey }), {
     status: replayStatus,
-    headers
+    headers,
   });
 }
 
@@ -161,9 +159,7 @@ export async function idempotencyMiddleware(c: Context, next: Next) {
   }
 
   const explicitKey =
-    c.req.header("idempotency-key")?.trim() ||
-    c.req.header("x-idempotency-key")?.trim() ||
-    "";
+    c.req.header("idempotency-key")?.trim() || c.req.header("x-idempotency-key")?.trim() || "";
   if (explicitKey && (explicitKey.length < 8 || explicitKey.length > 200)) {
     return c.json({ message: "شناسه عملیات معتبر نیست." }, 400);
   }
@@ -178,7 +174,7 @@ export async function idempotencyMiddleware(c: Context, next: Next) {
     method,
     path,
     userId,
-    expiresAt: expiresAt()
+    expiresAt: expiresAt(),
   };
   const reserved = explicitKey
     ? await (async () => {
@@ -188,47 +184,47 @@ export async function idempotencyMiddleware(c: Context, next: Next) {
         } catch (error) {
           if ((error as { code?: string } | null)?.code !== "P2002") throw error;
           const record = await prisma.idempotencyRecord.findUnique({
-            where: { scope_operationKey: { scope, operationKey: explicitKey } }
+            where: { scope_operationKey: { scope, operationKey: explicitKey } },
           });
           if (!record) throw error;
           return { owner: false as const, record };
         }
       })()
     : await prisma.$transaction(async (tx) => {
-    const lockId = explicitKey || requestHash;
-    await acquireTransactionLock(tx, "idempotency", `${scope}:${lockId}`);
+        const lockId = explicitKey || requestHash;
+        await acquireTransactionLock(tx, "idempotency", `${scope}:${lockId}`);
 
-    const existing = explicitKey
-      ? await tx.idempotencyRecord.findUnique({
-          where: { scope_operationKey: { scope, operationKey: explicitKey } }
-        })
-      : await tx.idempotencyRecord.findFirst({
-          where: {
-            scope,
-            requestHash,
-            createdAt: { gte: new Date(Date.now() - FALLBACK_DEDUPLICATION_MS) }
-          },
-          orderBy: { createdAt: "desc" }
+        const existing = explicitKey
+          ? await tx.idempotencyRecord.findUnique({
+              where: { scope_operationKey: { scope, operationKey: explicitKey } },
+            })
+          : await tx.idempotencyRecord.findFirst({
+              where: {
+                scope,
+                requestHash,
+                createdAt: { gte: new Date(Date.now() - FALLBACK_DEDUPLICATION_MS) },
+              },
+              orderBy: { createdAt: "desc" },
+            });
+
+        if (existing) {
+          return { owner: false as const, record: existing };
+        }
+
+        const record = await tx.idempotencyRecord.create({
+          data: recordData,
         });
-
-    if (existing) {
-      return { owner: false as const, record: existing };
-    }
-
-    const record = await tx.idempotencyRecord.create({
-      data: recordData
-    });
-    return { owner: true as const, record };
-  });
+        return { owner: true as const, record };
+      });
 
   if (!reserved.owner) {
     if (reserved.record.requestHash !== requestHash) {
       return c.json(
         {
           message: "این شناسه عملیات قبلاً برای درخواست دیگری استفاده شده است.",
-          operationId: reserved.record.operationKey
+          operationId: reserved.record.operationKey,
         },
-        409
+        409,
       );
     }
 
@@ -265,22 +261,24 @@ export async function idempotencyMiddleware(c: Context, next: Next) {
             : replayableBody === null
               ? "پاسخ عملیات برای بازپخش بسیار بزرگ بود."
               : null,
-        expiresAt: expiresAt()
-      }
+        expiresAt: expiresAt(),
+      },
     });
   } catch (error) {
-    await prisma.idempotencyRecord.update({
-      where: { id: reserved.record.id },
-      data: {
-        status: "FAILED",
-        responseStatus: 500,
-        errorMessage:
-          error instanceof Error
-            ? error.message.slice(0, 1_000)
-            : "عملیات با خطای نامشخص متوقف شد.",
-        expiresAt: expiresAt()
-      }
-    }).catch(() => undefined);
+    await prisma.idempotencyRecord
+      .update({
+        where: { id: reserved.record.id },
+        data: {
+          status: "FAILED",
+          responseStatus: 500,
+          errorMessage:
+            error instanceof Error
+              ? error.message.slice(0, 1_000)
+              : "عملیات با خطای نامشخص متوقف شد.",
+          expiresAt: expiresAt(),
+        },
+      })
+      .catch(() => undefined);
     throw error;
   }
 }
@@ -291,8 +289,8 @@ export function startIdempotencyCleanupScheduler() {
       await prisma.idempotencyRecord.deleteMany({
         where: {
           status: { in: ["COMPLETED", "FAILED"] },
-          expiresAt: { lt: new Date() }
-        }
+          expiresAt: { lt: new Date() },
+        },
       });
     } catch (error) {
       console.error("[idempotency-cleanup] failed", error);

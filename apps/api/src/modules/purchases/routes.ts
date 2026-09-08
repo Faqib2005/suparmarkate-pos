@@ -27,6 +27,7 @@ import {
   InventoryMutationService,
   requestOperationId
 } from "../../lib/inventory-mutation";
+import { inventoryOperationEvidence } from "../../lib/request-evidence";
 
 export const purchasesRoute = new Hono();
 
@@ -976,6 +977,7 @@ purchasesRoute.post("/", async (c) => {
       }))
     );
     const inventoryOperation = await inventory.startOperation({
+      ...inventoryOperationEvidence(c),
       type: "PURCHASE",
       clientRequestId: inventoryClientRequestId,
       occurredAt: inventoryOccurredAt,

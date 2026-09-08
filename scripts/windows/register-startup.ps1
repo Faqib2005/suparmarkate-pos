@@ -1,13 +1,35 @@
 param(
   [string]$ProjectDir = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
-  [string]$TaskName = "Muhaseb API",
+  [string]$ProjectName = "",
+  [string]$EnvironmentFile = "",
+  [string]$PostgresContainerName = "",
+  [string]$RedisContainerName = "",
+  [string]$ApiContainerName = "",
+  [string]$TaskName = "",
+  [ValidateRange(1, 65535)]
+  [int]$ApiPort = 4000,
+  [ValidateRange(1, 65535)]
+  [int]$PosWebSocketPort = 4001,
+  [ValidateRange(1, 65535)]
+  [int]$SystemHealthWebSocketPort = 4002,
+  [ValidateRange(1, 65535)]
+  [int]$PostgresPort = 5432,
+  [ValidateRange(1, 65535)]
+  [int]$RedisPort = 6379,
   [ValidateSet("Docker", "Node")]
   [string]$Mode = "Docker",
-  [string]$BackupDir = "D:\BelalBackups",
+  [string]$BackupDir = "",
   [string]$LanIp = ""
 )
 
 $ErrorActionPreference = "Stop"
+$resolvedTaskName = if ($TaskName.Trim()) {
+  $TaskName.Trim()
+} elseif ($ProjectName.Trim()) {
+  "Muhaseb API ($($ProjectName.Trim().ToLowerInvariant()))"
+} else {
+  "Muhaseb API"
+}
 $principalCheck = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principalCheck.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
   throw "Run this script as Administrator to register the Muhaseb startup task."
@@ -22,9 +44,31 @@ if ($Mode -eq "Docker") {
     "-WindowStyle", "Hidden",
     "-File", "`"$startScript`"",
     "-ProjectDir", "`"$ProjectDir`"",
-    "-BackupDir", "`"$BackupDir`"",
+    "-ApiPort", "$ApiPort",
+    "-PosWebSocketPort", "$PosWebSocketPort",
+    "-SystemHealthWebSocketPort", "$SystemHealthWebSocketPort",
+    "-PostgresPort", "$PostgresPort",
+    "-RedisPort", "$RedisPort",
     "-ReuseImage"
   )
+  if ($ProjectName.Trim()) {
+    $taskArguments += @("-ProjectName", "`"$($ProjectName.Trim())`"")
+  }
+  if ($EnvironmentFile.Trim()) {
+    $taskArguments += @("-EnvironmentFile", "`"$($EnvironmentFile.Trim())`"")
+  }
+  if ($PostgresContainerName.Trim()) {
+    $taskArguments += @("-PostgresContainerName", "`"$($PostgresContainerName.Trim())`"")
+  }
+  if ($RedisContainerName.Trim()) {
+    $taskArguments += @("-RedisContainerName", "`"$($RedisContainerName.Trim())`"")
+  }
+  if ($ApiContainerName.Trim()) {
+    $taskArguments += @("-ApiContainerName", "`"$($ApiContainerName.Trim())`"")
+  }
+  if ($BackupDir.Trim()) {
+    $taskArguments += @("-BackupDir", "`"$($BackupDir.Trim())`"")
+  }
   if ($LanIp.Trim()) {
     $taskArguments += @("-LanIp", "`"$($LanIp.Trim())`"")
   }
@@ -49,14 +93,14 @@ if ($Mode -eq "Docker") {
     -MultipleInstances IgnoreNew
 
   Register-ScheduledTask `
-    -TaskName $TaskName `
+    -TaskName $resolvedTaskName `
     -Action $action `
     -Trigger $trigger `
     -Principal $principal `
     -Settings $settings `
     -Force
 
-  Start-ScheduledTask -TaskName $TaskName
+  Start-ScheduledTask -TaskName $resolvedTaskName
   Write-Host "Muhaseb Docker startup task registered for $currentUser and started."
   exit 0
 }
@@ -86,12 +130,12 @@ $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccou
 $settings = New-ScheduledTaskSettingsSet -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1)
 
 Register-ScheduledTask `
-  -TaskName $TaskName `
+  -TaskName $resolvedTaskName `
   -Action $action `
   -Trigger $trigger `
   -Principal $principal `
   -Settings $settings `
   -Force
 
-Start-ScheduledTask -TaskName $TaskName
+Start-ScheduledTask -TaskName $resolvedTaskName
 Write-Host "Muhaseb API startup task registered and started."

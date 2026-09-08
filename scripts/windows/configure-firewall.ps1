@@ -1,13 +1,15 @@
 param(
   [int]$ApiPort = 4000,
   [int]$PosWebSocketPort = 4001,
-  [int]$SystemHealthWebSocketPort = 4002
+  [int]$SystemHealthWebSocketPort = 4002,
+  [string]$InstanceName = ""
 )
 
 $ErrorActionPreference = "Stop"
+$ruleSuffix = if ($InstanceName.Trim()) { " ($($InstanceName.Trim()))" } else { "" }
 
 New-NetFirewallRule `
-  -DisplayName "Muhaseb API LAN" `
+  -DisplayName "Muhaseb API LAN$ruleSuffix" `
   -Direction Inbound `
   -Protocol TCP `
   -LocalPort $ApiPort `
@@ -16,7 +18,7 @@ New-NetFirewallRule `
   -ErrorAction SilentlyContinue | Out-Null
 
 New-NetFirewallRule `
-  -DisplayName "Muhaseb POS WebSocket LAN" `
+  -DisplayName "Muhaseb POS WebSocket LAN$ruleSuffix" `
   -Direction Inbound `
   -Protocol TCP `
   -LocalPort $PosWebSocketPort `
@@ -25,7 +27,7 @@ New-NetFirewallRule `
   -ErrorAction SilentlyContinue | Out-Null
 
 New-NetFirewallRule `
-  -DisplayName "Muhaseb System Health WebSocket LAN" `
+  -DisplayName "Muhaseb System Health WebSocket LAN$ruleSuffix" `
   -Direction Inbound `
   -Protocol TCP `
   -LocalPort $SystemHealthWebSocketPort `

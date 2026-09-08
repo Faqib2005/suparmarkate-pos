@@ -23,6 +23,7 @@ import {
   InventoryMutationService,
   requestOperationId
 } from "../../lib/inventory-mutation";
+import { inventoryOperationEvidence } from "../../lib/request-evidence";
 import { kabulNow } from "../../lib/kabul-date";
 
 export const purchaseReturnsRoute = new Hono();
@@ -272,6 +273,7 @@ purchaseReturnsRoute.post("/", async (c) => {
     );
     const operationOccurredAt = kabulNow();
     const inventoryOperation = await inventory.startOperation({
+      ...inventoryOperationEvidence(c),
       type: "PURCHASE_RETURN",
       clientRequestId: requestOperationId(
         parsed.data.clientRequestId ||

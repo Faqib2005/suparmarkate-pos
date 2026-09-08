@@ -1,8 +1,24 @@
 param(
   [string]$ProjectDir = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
+  [string]$ProjectName = "",
+  [string]$EnvironmentFile = "",
+  [string]$PostgresContainerName = "",
+  [string]$RedisContainerName = "",
+  [string]$ApiContainerName = "",
+  [string]$TaskName = "",
+  [ValidateRange(1, 65535)]
+  [int]$ApiPort = 4000,
+  [ValidateRange(1, 65535)]
+  [int]$PosWebSocketPort = 4001,
+  [ValidateRange(1, 65535)]
+  [int]$SystemHealthWebSocketPort = 4002,
+  [ValidateRange(1, 65535)]
+  [int]$PostgresPort = 5432,
+  [ValidateRange(1, 65535)]
+  [int]$RedisPort = 6379,
   [ValidateSet("Docker", "Node")]
   [string]$Mode = "Docker",
-  [string]$BackupDir = "D:\BelalBackups",
+  [string]$BackupDir = "",
   [string]$LanIp = "",
   [switch]$SkipStartupRegistration,
   [switch]$ConfirmStableIp,
@@ -20,6 +36,16 @@ if ($Mode -eq "Docker") {
   Write-Host "Installing the complete Muhaseb Docker server stack..."
   & (Join-Path $PSScriptRoot "start-docker-server.ps1") `
     -ProjectDir $ProjectDir `
+    -ProjectName $ProjectName `
+    -EnvironmentFile $EnvironmentFile `
+    -PostgresContainerName $PostgresContainerName `
+    -RedisContainerName $RedisContainerName `
+    -ApiContainerName $ApiContainerName `
+    -ApiPort $ApiPort `
+    -PosWebSocketPort $PosWebSocketPort `
+    -SystemHealthWebSocketPort $SystemHealthWebSocketPort `
+    -PostgresPort $PostgresPort `
+    -RedisPort $RedisPort `
     -BackupDir $BackupDir `
     -LanIp $LanIp `
     -ConfirmStableIp:$ConfirmStableIp `
@@ -32,6 +58,17 @@ if ($Mode -eq "Docker") {
   if (-not $SkipStartupRegistration) {
     & (Join-Path $PSScriptRoot "register-startup.ps1") `
       -ProjectDir $ProjectDir `
+      -ProjectName $ProjectName `
+      -EnvironmentFile $EnvironmentFile `
+      -PostgresContainerName $PostgresContainerName `
+      -RedisContainerName $RedisContainerName `
+      -ApiContainerName $ApiContainerName `
+      -TaskName $TaskName `
+      -ApiPort $ApiPort `
+      -PosWebSocketPort $PosWebSocketPort `
+      -SystemHealthWebSocketPort $SystemHealthWebSocketPort `
+      -PostgresPort $PostgresPort `
+      -RedisPort $RedisPort `
       -Mode Docker `
       -BackupDir $BackupDir `
       -LanIp $LanIp

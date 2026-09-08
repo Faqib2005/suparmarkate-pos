@@ -463,7 +463,10 @@ async function operationFetch(input: string, init: RequestInit = {}) {
   if (pathName === "/api/pos/scan") return fetch(input, init);
 
   const headers = new Headers(init.headers || {});
+  headers.set("x-client-channel", "MOBILE");
+  headers.set("x-app-version", process.env.EXPO_PUBLIC_APP_VERSION || "mobile-dev");
   if (headers.has("Idempotency-Key")) {
+    headers.set("x-correlation-id", headers.get("Idempotency-Key")!);
     return fetch(input, { ...init, method, headers });
   }
 
@@ -497,6 +500,7 @@ async function operationFetch(input: string, init: RequestInit = {}) {
 
   headers.set("Idempotency-Key", operationId);
   headers.set("X-Idempotency-Payload-Hash", payloadHash);
+  headers.set("x-correlation-id", operationId);
 
   try {
     const response = await fetch(input, { ...init, method, headers });

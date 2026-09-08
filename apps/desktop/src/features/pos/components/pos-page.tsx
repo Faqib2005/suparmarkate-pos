@@ -10,7 +10,11 @@ import { PosStockIncreaseDialog } from "@/features/pos/components/pos-stock-incr
 import { usePosSession } from "@/features/pos/hooks/use-pos-session";
 import { usePosShortcuts } from "@/features/pos/hooks/use-pos-shortcuts";
 
-export function PosPage() {
+type PosPageProps = {
+  canManageInventory?: boolean;
+};
+
+export function PosPage({ canManageInventory = false }: PosPageProps) {
   const pos = usePosSession();
   const productSearchRef = useRef<PosProductSearchCardRef | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -116,7 +120,9 @@ export function PosPage() {
             onPrintShiftReport={pos.printShiftReport}
             onStartNewShift={pos.startNewShift}
             onOpenSettings={() => setSettingsOpen(true)}
-            onOpenStockIncrease={() => setStockIncreaseOpen(true)}
+            onOpenStockIncrease={
+              canManageInventory ? () => setStockIncreaseOpen(true) : undefined
+            }
             onHoldCart={() => pos.holdCurrentCart()}
             onRestoreHeldCart={pos.restoreHeldCartById}
             onClearCart={pos.clearCart}
@@ -199,15 +205,17 @@ export function PosPage() {
         onReceiptMarginRightChange={pos.setReceiptMarginRightMm}
         onMetricVisibilityChange={pos.setMetricVisibility}
       />
-      <PosStockIncreaseDialog
-        open={stockIncreaseOpen}
-        onOpenChange={setStockIncreaseOpen}
-        apiBaseUrl={pos.apiBaseUrl}
-        warehouse={pos.warehouse}
-        currency={pos.currency}
-        initialProducts={pos.filteredProducts}
-        onStockIncreased={pos.refreshPosData}
-      />
+      {canManageInventory ? (
+        <PosStockIncreaseDialog
+          open={stockIncreaseOpen}
+          onOpenChange={setStockIncreaseOpen}
+          apiBaseUrl={pos.apiBaseUrl}
+          warehouse={pos.warehouse}
+          currency={pos.currency}
+          initialProducts={pos.filteredProducts}
+          onStockIncreased={pos.refreshPosData}
+        />
+      ) : null}
     </div>
   );
 }

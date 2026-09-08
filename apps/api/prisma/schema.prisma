@@ -742,6 +742,11 @@ model InventoryOperation {
 
   createdByUserId   String?
   cancelledByUserId String?
+  sourceChannel     String?
+  sourceDeviceCode  String?
+  appVersion        String?
+  correlationId     String?
+  requestIp         String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -749,7 +754,79 @@ model InventoryOperation {
 
   @@index([type, occurredAt])
   @@index([status, occurredAt])
+  @@index([sourceDeviceCode, occurredAt])
+  @@index([correlationId])
   @@index([createdAt])
+}
+
+model InventoryVerificationSession {
+  id String @id @default(cuid())
+
+  warehouseId String
+  status      String @default("ACTIVE")
+  note        String?
+  startedAt   DateTime @default(now())
+  closedAt    DateTime?
+
+  createdByUserId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  products InventoryVerificationProduct[]
+  counts   InventoryPhysicalCountEntry[]
+
+  @@index([warehouseId, status])
+  @@index([startedAt])
+}
+
+model InventoryVerificationProduct {
+  id String @id @default(cuid())
+
+  sessionId String
+  session   InventoryVerificationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  productId String
+
+  selectionReason String?
+  precisionBase   Decimal @default(0.0001) @db.Decimal(18, 4)
+
+  openingConfirmedQuantity Decimal? @db.Decimal(18, 4)
+  closingConfirmedQuantity Decimal? @db.Decimal(18, 4)
+  expectedClosingQuantity  Decimal? @db.Decimal(18, 4)
+  systemQuantityAtClose    Decimal? @db.Decimal(18, 4)
+  classification           String?
+  discrepancy              Decimal? @db.Decimal(18, 4)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  counts InventoryPhysicalCountEntry[]
+
+  @@unique([sessionId, productId])
+  @@index([productId])
+  @@index([classification])
+}
+
+model InventoryPhysicalCountEntry {
+  id String @id @default(cuid())
+
+  sessionId String
+  session   InventoryVerificationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionProductId String
+  sessionProduct   InventoryVerificationProduct @relation(fields: [sessionProductId], references: [id], onDelete: Cascade)
+
+  checkpointKey  String
+  checkpointType String
+  cutoffAt       DateTime
+  counterUserId  String
+  quantityBase   Decimal @db.Decimal(18, 4)
+  note           String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([sessionProductId, checkpointKey, counterUserId])
+  @@index([sessionId, checkpointKey])
+  @@index([counterUserId, createdAt])
+  @@index([cutoffAt])
 }
 
 model StockBalance {

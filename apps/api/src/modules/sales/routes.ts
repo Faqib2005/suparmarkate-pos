@@ -33,6 +33,7 @@ import {
   InventoryMutationService,
   requestOperationId
 } from "../../lib/inventory-mutation";
+import { inventoryOperationEvidence } from "../../lib/request-evidence";
 import { roundStockQuantity, stockDecimal } from "../../lib/stock-quantity";
 
 export const salesRoute = new Hono();
@@ -86,6 +87,7 @@ const saleResponseInclude = {
 } as const;
 
 class SaleRequestOwnershipError extends Error {}
+class SaleIdempotentReplayError extends Error {}
 
 async function loadIdempotentSaleResult(
   clientRequestId: string,
@@ -1242,6 +1244,7 @@ salesRoute.post("/", async (c) => {
   const preparedItems: Array<{
     productId: string;
     warehouseId: string;
+    lotId: string | null;
     unitId: string;
     quantity: number;
     conversionRate: number;
@@ -1402,6 +1405,7 @@ salesRoute.post("/", async (c) => {
     preparedItems.push({
       productId: rawItem.productId,
       warehouseId: rawItem.warehouseId,
+      lotId: rawItem.lotId ?? null,
       unitId: rawItem.unitId,
       quantity: rawItem.quantity,
       conversionRate,
@@ -1588,12 +1592,112 @@ salesRoute.post("/", async (c) => {
   const runSaleTransaction = () => prisma.$transaction(async (tx) => {
     const inventory = new InventoryMutationService(tx);
     await inventory.prepare(
-      pricedSaleLines.map(({ preparedItem }) => ({
+      preparedItems.map((preparedItem) => ({
         productId: preparedItem.productId,
         warehouseId: preparedItem.warehouseId
       }))
     );
+    if (parsed.data.clientRequestId) {
+      const committedSale = await tx.sale.findUnique({
+        where: { clientRequestId: parsed.data.clientRequestId },
+        select: { cashierId: true }
+      });
+      if (committedSale) {
+        if (committedSale.cashierId && committedSale.cashierId !== (authUser?.id || null)) {
+          throw new SaleRequestOwnershipError("This sale request ID belongs to another user");
+        }
+        throw new SaleIdempotentReplayError();
+      }
+    }
+    const lockedPreparedItems = [];
+    for (const preparedItem of preparedItems) {
+      const lots = await tx.stockLot.findMany({
+        where: {
+          productId: preparedItem.productId,
+          warehouseId: preparedItem.warehouseId,
+          remainingQuantity: { gt: 0 },
+          ...(preparedItem.lotId ? { id: preparedItem.lotId } : {})
+        },
+        orderBy: [{ expiryDate: "asc" }, { createdAt: "asc" }, { id: "asc" }]
+      });
+      let remainingToAllocate = preparedItem.quantityBase;
+      let remainingQuantityToAllocate = roundStockQuantity(preparedItem.quantity);
+      const allocations: typeof preparedItem.allocations = [];
+
+      for (const lot of lots) {
+        if (remainingToAllocate <= 0) break;
+        const available = roundStockQuantity(Number(lot.remainingQuantity));
+        const lotCanFinishLine = available + 0.00005 >= remainingToAllocate;
+        const allocatedQuantity = lotCanFinishLine
+          ? remainingQuantityToAllocate
+          : Math.floor(
+              ((available / preparedItem.conversionRate) + Number.EPSILON) * 10_000
+            ) / 10_000;
+        const allocatedBase = lotCanFinishLine
+          ? remainingToAllocate
+          : roundStockQuantity(allocatedQuantity * preparedItem.conversionRate);
+        if (allocatedQuantity <= 0) continue;
+        const unitCostBase = Number(lot.unitCost);
+        const costExchangeRate = Number(lot.exchangeRate || 1);
+        const baseUnitCost = Number(
+          lot.baseUnitCost || unitCostBase * costExchangeRate
+        );
+
+        allocations.push({
+          lotId: lot.id,
+          quantityBase: allocatedBase,
+          quantity: allocatedQuantity,
+          unitCostBase,
+          totalCost: allocatedBase * unitCostBase,
+          baseUnitCost,
+          baseTotalCost: allocatedBase * baseUnitCost,
+          costExchangeRate,
+          currencyId: lot.currencyId,
+          expiryDate: lot.expiryDate
+        });
+        remainingToAllocate = roundStockQuantity(remainingToAllocate - allocatedBase);
+        remainingQuantityToAllocate = roundStockQuantity(
+          remainingQuantityToAllocate - allocatedQuantity
+        );
+      }
+
+      if (remainingToAllocate > 0) {
+        throw new Error("Not enough stock for concurrent sale");
+      }
+      lockedPreparedItems.push({ ...preparedItem, allocations });
+    }
+    const lockedSaleLines = lockedPreparedItems.flatMap((preparedItem) => {
+      const weights = preparedItem.allocations.map((allocation) => allocation.quantity);
+      const grossAllocations = allocateMoneyByWeight(
+        roundMoney4(preparedItem.quantity * preparedItem.unitPrice),
+        weights
+      );
+      const itemDiscountAllocations = allocateMoneyByWeight(
+        preparedItem.discount,
+        weights
+      );
+      return preparedItem.allocations.map((allocation, index) => ({
+        preparedItem,
+        allocation,
+        lineDiscount: itemDiscountAllocations[index] ?? 0,
+        lineTotal: roundMoney4(
+          (grossAllocations[index] ?? 0) - (itemDiscountAllocations[index] ?? 0)
+        )
+      }));
+    });
+    const lockedDocumentDiscountAllocations = allocateMoneyByWeight(
+      documentDiscount,
+      lockedSaleLines.map((line) => line.lineTotal)
+    );
+    const lockedPricedSaleLines = lockedSaleLines.map((line, index) => ({
+      ...line,
+      documentDiscountAllocated: lockedDocumentDiscountAllocations[index] ?? 0,
+      netTotalPrice: roundMoney4(
+        line.lineTotal - (lockedDocumentDiscountAllocations[index] ?? 0)
+      )
+    }));
     const inventoryOperation = await inventory.startOperation({
+      ...inventoryOperationEvidence(c),
       type: "SALE",
       clientRequestId: inventoryClientRequestId,
       occurredAt: inventoryOccurredAt,
@@ -1628,7 +1732,7 @@ salesRoute.post("/", async (c) => {
 
     const createdItems = [];
 
-    for (const pricedLine of pricedSaleLines) {
+    for (const pricedLine of lockedPricedSaleLines) {
         const { preparedItem, allocation } = pricedLine;
         const stockUpdate = await tx.stockLot.updateMany({
           where: {
@@ -1871,6 +1975,20 @@ salesRoute.post("/", async (c) => {
   try {
     result = await runSaleTransaction();
   } catch (error) {
+    if (parsed.data.clientRequestId && error instanceof SaleIdempotentReplayError) {
+      const replay = await loadIdempotentSaleResult(
+        parsed.data.clientRequestId,
+        authUser?.id || null
+      );
+      if (replay) {
+        return c.json({ data: replay, idempotentReplay: true }, 200);
+      }
+    }
+
+    if (error instanceof SaleRequestOwnershipError) {
+      return c.json({ message: error.message }, 409);
+    }
+
     if (parsed.data.clientRequestId && isUniqueConstraintError(error)) {
       const replay = await loadIdempotentSaleResult(
         parsed.data.clientRequestId,
