@@ -186,18 +186,20 @@ test("Admin can preview and explicitly confirm a safe duplicate product merge", 
     confirm: true,
   });
   expect(mergeOperationId).toMatch(/^[0-9a-z-]{8,}$/i);
-  const persistedOperations = await page.evaluate(() =>
-    JSON.parse(
-      window.localStorage.getItem("muhaseb_recent_mutation_operations_v1") ||
-        "[]",
-    ),
-  );
-  expect(
-    persistedOperations.some(
-      ([, operation]: [string, { operationId: string }]) =>
-        operation.operationId === mergeOperationId,
-    ),
-  ).toBe(false);
+  await expect
+    .poll(async () => {
+      const persistedOperations = await page.evaluate(() =>
+        JSON.parse(
+          window.localStorage.getItem("muhaseb_recent_mutation_operations_v1") ||
+            "[]",
+        ),
+      );
+      return persistedOperations.some(
+        ([, operation]: [string, { operationId: string }]) =>
+          operation.operationId === mergeOperationId,
+      );
+    })
+    .toBe(false);
   expect(runtimeErrors).toEqual([]);
 });
 
