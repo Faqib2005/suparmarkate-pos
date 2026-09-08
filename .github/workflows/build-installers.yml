@@ -113,7 +113,9 @@ jobs:
 
       - name: Validate Android Expo bundle
         working-directory: apps/mobile-scanner
-        run: npx expo export --platform android --output-dir ../../artifacts/mobile-export
+        run: |
+          npx expo install --check
+          npx expo export --platform android --output-dir ../../artifacts/mobile-export
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
