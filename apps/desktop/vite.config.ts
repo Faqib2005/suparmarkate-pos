@@ -1,7 +1,10 @@
+import { createRequire } from "node:module"
 import path from "path"
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
+
+const require = createRequire(import.meta.url)
 
 export default defineConfig({
   base: "./",
@@ -10,7 +13,7 @@ export default defineConfig({
     dedupe: ["react", "react-dom"],
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      recharts: path.resolve(__dirname, "./node_modules/recharts/es6/index.js"),
+      recharts: require.resolve("recharts/es6/index.js"),
       "es-toolkit/compat/get": path.resolve(
         __dirname,
         "./src/lib/es-toolkit-compat/get.ts"
@@ -54,16 +57,6 @@ export default defineConfig({
       "es-toolkit/compat/uniqBy": path.resolve(
         __dirname,
         "./src/lib/es-toolkit-compat/uniqBy.ts"
-      ),
-      react: path.resolve(__dirname, "./node_modules/react"),
-      "react-dom": path.resolve(__dirname, "./node_modules/react-dom"),
-      "react/jsx-runtime": path.resolve(
-        __dirname,
-        "./node_modules/react/jsx-runtime.js"
-      ),
-      "react/jsx-dev-runtime": path.resolve(
-        __dirname,
-        "./node_modules/react/jsx-dev-runtime.js"
       ),
     },
   },
