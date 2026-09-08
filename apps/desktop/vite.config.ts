@@ -13,6 +13,7 @@ export default defineConfig({
     dedupe: ["react", "react-dom"],
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "react-is": require.resolve("react-is"),
       recharts: require.resolve("recharts/es6/index.js"),
       "es-toolkit/compat/get": path.resolve(
         __dirname,

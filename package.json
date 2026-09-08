@@ -44,6 +44,7 @@
   },
   "devDependencies": {
     "@playwright/test": "1.62.0",
+    "react-is": "^19.2.0",
     "shell-quote": "1.10.0",
     "vitest": "4.1.10"
   },
