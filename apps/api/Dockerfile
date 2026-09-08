@@ -19,7 +19,7 @@ COPY apps/desktop/package.json apps/desktop/package.json
 COPY apps/mobile-scanner/package.json apps/mobile-scanner/package.json
 COPY packages packages
 
-RUN npm ci --workspace @supermarket/api --workspace @supermarket/desktop --include-workspace-root
+RUN npm ci --legacy-peer-deps --workspace @supermarket/api --workspace @supermarket/desktop --include-workspace-root
 
 COPY apps/api apps/api
 COPY apps/desktop apps/desktop
