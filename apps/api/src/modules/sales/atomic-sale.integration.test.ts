@@ -55,7 +55,8 @@ adminReturnsApp.route("/", saleReturnsRoute);
 
 async function createFixture(
   label: string,
-  saleCurrencyId = baseCurrencyId
+  saleCurrencyId = baseCurrencyId,
+  lotQuantities: number[] = [4, 5],
 ): Promise<Fixture> {
   const suffix = `${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const product = await prisma.product.create({
@@ -80,38 +81,25 @@ async function createFixture(
     },
     include: { accounts: true }
   });
-  const firstLotCreatedAt = new Date(Date.now() - 1_000);
-  const secondLotCreatedAt = new Date();
-  const lots = await Promise.all([
-    prisma.stockLot.create({
-      data: {
-        productId: product.id,
-        warehouseId,
-        initialQuantity: 4,
-        remainingQuantity: 4,
-        unitCost: 10,
-        currencyId: baseCurrencyId,
-        exchangeRate: 1,
-        baseUnitCost: 10,
-        sourceType: "ATOMIC_SALE_TEST",
-        createdAt: firstLotCreatedAt
-      }
+  const lots = await Promise.all(
+    lotQuantities.map((quantity, index) => {
+      const unitCost = 10 + index * 2;
+      return prisma.stockLot.create({
+        data: {
+          productId: product.id,
+          warehouseId,
+          initialQuantity: quantity,
+          remainingQuantity: quantity,
+          unitCost,
+          currencyId: baseCurrencyId,
+          exchangeRate: 1,
+          baseUnitCost: unitCost,
+          sourceType: "ATOMIC_SALE_TEST",
+          createdAt: new Date(Date.now() - (lotQuantities.length - index) * 1_000),
+        },
+      });
     }),
-    prisma.stockLot.create({
-      data: {
-        productId: product.id,
-        warehouseId,
-        initialQuantity: 5,
-        remainingQuantity: 5,
-        unitCost: 12,
-        currencyId: baseCurrencyId,
-        exchangeRate: 1,
-        baseUnitCost: 12,
-        sourceType: "ATOMIC_SALE_TEST",
-        createdAt: secondLotCreatedAt
-      }
-    })
-  ]);
+  );
 
   const fixture = {
     productId: product.id,
@@ -271,6 +259,45 @@ afterAll(async () => {
 });
 
 describe("atomic POS sale", () => {
+  it("splits an 18-unit POS sale across FIFO lots and keeps one receipt quantity", async () => {
+    const fixture = await createFixture("fifo-5-10-20", baseCurrencyId, [5, 10, 20]);
+    const clientRequestId = `atomic-${Date.now()}-fifo-18`;
+    fixture.clientRequestIds.push(clientRequestId);
+
+    const response = await saleRequest(fixture, clientRequestId, {
+      quantity: 18,
+      unitPrice: 20,
+      paidAmount: 360,
+    });
+    expect(response.status).toBe(201);
+    const payload = await response.json() as any;
+    const saleId = payload.data.sale.id as string;
+    const sale = await prisma.sale.findUniqueOrThrow({
+      where: { id: saleId },
+      include: { items: true },
+    });
+    const lots = await prisma.stockLot.findMany({
+      where: { id: { in: fixture.lotIds } },
+      orderBy: { createdAt: "asc" },
+    });
+    const saleQuantityByLotId = new Map(
+      sale.items.map((item) => [item.lotId, Number(item.quantity)]),
+    );
+    expect(lots.map((lot) => saleQuantityByLotId.get(lot.id))).toEqual([5, 10, 3]);
+    expect(lots.map((lot) => Number(lot.remainingQuantity))).toEqual([0, 0, 17]);
+
+    const tokenResponse = await posReceiptsRoute.request(
+      `http://localhost/sales/${saleId}/token`,
+      { method: "POST" },
+    );
+    const tokenPayload = await tokenResponse.json() as any;
+    const receiptResponse = await posReceiptsRoute.request(
+      `http://localhost/sales/${saleId}/html?accessToken=${encodeURIComponent(tokenPayload.data.token)}&width=80`,
+    );
+    expect(receiptResponse.status).toBe(200);
+    expect(await receiptResponse.text()).toContain("<td>18 عدد</td>");
+  });
+
   it("serializes ten distinct concurrent sales against the same product stock", async () => {
     const fixture = await createFixture("ten-concurrent-sales");
     const requestIds = Array.from(

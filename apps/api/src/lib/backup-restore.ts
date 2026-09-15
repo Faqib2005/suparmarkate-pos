@@ -5,6 +5,10 @@ import { runIntegrityAudit, type IntegrityAuditReport } from "./integrity-audit"
 import { setMaintenanceMode } from "./maintenance-mode";
 import { waitForPersistentJobWorkerIdle } from "./persistent-jobs";
 import {
+  repairRestoredInventory,
+  type PostRestoreInventoryRepairSummary
+} from "./post-restore-inventory-repair";
+import {
   applyPostRestoreSchemaAndSeed,
   createNativeBackup,
   getBackupDir,
@@ -27,6 +31,7 @@ export type BackupRestoreResult = {
   restoreMode: NativeBackupValidation["restoreMode"];
   integrity: IntegrityAuditReport["summary"];
   sessionsRevoked: number;
+  inventoryRepair: PostRestoreInventoryRepairSummary;
 };
 
 export class BackupRestoreError extends Error {
@@ -59,6 +64,7 @@ type RestoreDependencies = {
     validation: NativeBackupValidation
   ) => Promise<unknown>;
   applySchemaAndSeed: () => Promise<void>;
+  repairInventory: (restoreKey: string) => Promise<PostRestoreInventoryRepairSummary>;
   disconnectDatabase: () => Promise<void>;
   clearCaches: () => Promise<void>;
   revokeSessions: () => Promise<number>;
@@ -132,6 +138,7 @@ const defaultDependencies: RestoreDependencies = {
   restoreBackup: (filePath, validation) =>
     restoreNativeBackup(filePath, { validation }),
   applySchemaAndSeed: applyPostRestoreSchemaAndSeed,
+  repairInventory: repairRestoredInventory,
   disconnectDatabase: () => prisma.$disconnect(),
   clearCaches: clearRestoreCaches,
   revokeSessions: revokeAllSessions,
@@ -145,12 +152,23 @@ async function applyRestoredState(input: {
   filePath: string;
   validation: NativeBackupValidation;
   label: string;
+  repairInventory: boolean;
+  restoreKey: string;
   dependencies: RestoreDependencies;
 }) {
   const dependencies = input.dependencies;
   await dependencies.disconnectDatabase();
   await dependencies.restoreBackup(input.filePath, input.validation);
   await dependencies.applySchemaAndSeed();
+  const inventoryRepair = input.repairInventory
+    ? await dependencies.repairInventory(input.restoreKey)
+    : {
+        negativeLotsRepaired: 0,
+        negativeQuantityCorrected: 0,
+        smallLedgerMismatchesRepaired: 0,
+        ledgerQuantityCorrected: 0,
+        sampleOperationIds: []
+      };
   await dependencies.clearCaches();
   const sessionsRevoked = await dependencies.revokeSessions();
   const integrity = await dependencies.integrityAudit(input.label);
@@ -161,7 +179,7 @@ async function applyRestoredState(input: {
       .join(", ");
     throw new Error(`Restored database failed integrity audit: ${issueCodes || "unknown blocker"}`);
   }
-  return { sessionsRevoked, integrity };
+  return { sessionsRevoked, integrity, inventoryRepair };
 }
 
 export function isBackupRestoreInProgress() {
@@ -221,6 +239,8 @@ export async function executeBackupRestore(
       filePath,
       validation: lockedValidation,
       label: `restore:${input.filename}`,
+      repairInventory: true,
+      restoreKey: `${input.filename}:${lockedValidation.database.sha256}`,
       dependencies
     });
 
@@ -233,7 +253,8 @@ export async function executeBackupRestore(
       details: {
         restoreMode: lockedValidation.restoreMode,
         integrity: applied.integrity.summary,
-        sessionsRevoked: applied.sessionsRevoked
+        sessionsRevoked: applied.sessionsRevoked,
+        inventoryRepair: applied.inventoryRepair
       }
     });
 
@@ -242,7 +263,8 @@ export async function executeBackupRestore(
       safetyBackup: safetyBackup.filename,
       restoreMode: lockedValidation.restoreMode,
       integrity: applied.integrity.summary,
-      sessionsRevoked: applied.sessionsRevoked
+      sessionsRevoked: applied.sessionsRevoked,
+      inventoryRepair: applied.inventoryRepair
     };
   } catch (error) {
     if (error instanceof BackupRestoreError) throw error;
@@ -266,6 +288,8 @@ export async function executeBackupRestore(
         filePath: safetyBackup.filePath,
         validation: safetyValidation,
         label: `restore-rollback:${input.filename}`,
+        repairInventory: false,
+        restoreKey: `rollback:${safetyBackup.filename}`,
         dependencies
       });
       await dependencies.recordAudit({

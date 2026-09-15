@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -49,10 +49,13 @@ describe("backup upload snapshots", () => {
     await backupUploadedFiles(backupFile);
     await writeFile(path.join(uploads, "products", "tea.jpg"), "changed-image", "utf8");
     await writeFile(path.join(uploads, "keep-until-swap.txt"), "current", "utf8");
+    const uploadDirectoryBefore = await stat(uploads);
 
     const result = await restoreUploadedFiles(backupFile, { required: true });
+    const uploadDirectoryAfter = await stat(uploads);
 
     expect(result.restored).toBe(true);
+    expect(uploadDirectoryAfter.ino).toBe(uploadDirectoryBefore.ino);
     expect(await readFile(path.join(uploads, "products", "tea.jpg"), "utf8")).toBe(
       "original-image"
     );

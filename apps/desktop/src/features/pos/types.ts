@@ -121,22 +121,28 @@ export type ServerCartItem = {
     isDefaultSale?: boolean;
   }>;
   quantity: number;
+  quantityBase?: number;
   unitPrice: number;
   discount: number;
   lineTotal: number;
+  availableBaseQuantity?: number;
+  lotCount?: number;
+  nextExpiryDate?: string | null;
+  // Compatibility fields for an older API during phased deployment.
   totalStock?: number;
   expiryDate?: string | null;
-  lotId?: string | null;
 };
 
 export type ServerCart = {
   sessionId: string;
   items: ServerCartItem[];
+  revision?: number;
   updatedAt: string;
 };
 
 export type ServerCartSummary = {
   sessionId: string;
+  revision?: number;
   itemsCount: number;
   total: number;
   updatedAt: string;

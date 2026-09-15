@@ -15,6 +15,7 @@ const runBackupIntegration = process.env.RUN_BACKUP_INTEGRATION === "true";
 describe.skipIf(!runBackupIntegration)("PostgreSQL backup restore integration", () => {
   const beforeAction = `BACKUP_TEST_BEFORE_${Date.now()}`;
   const afterAction = `BACKUP_TEST_AFTER_${Date.now()}`;
+  const newerSchemaProbe = `RestoreNewerSchemaProbe_${Date.now()}`;
 
   beforeAll(async () => {
     const databaseUrl = process.env.DATABASE_URL || "";
@@ -55,6 +56,7 @@ describe.skipIf(!runBackupIntegration)("PostgreSQL backup restore integration", 
     await prisma.auditLog.create({
       data: { action: afterAction, description: "must disappear after target restore" }
     });
+    await prisma.$executeRawUnsafe(`CREATE TABLE "${newerSchemaProbe}" ("id" TEXT PRIMARY KEY)`);
     await writeFile(path.join(getUploadDir(), "receipt.txt"), "after-backup", "utf8");
 
     const validation = await validateNativeBackup(target.filePath);
@@ -77,6 +79,10 @@ describe.skipIf(!runBackupIntegration)("PostgreSQL backup restore integration", 
     );
     expect(await prisma.auditLog.count({ where: { action: beforeAction } })).toBe(1);
     expect(await prisma.auditLog.count({ where: { action: afterAction } })).toBe(0);
+    const newerTable = await prisma.$queryRawUnsafe<Array<{ table_name: string | null }>>(
+      `SELECT to_regclass('public."${newerSchemaProbe}"')::TEXT AS table_name`
+    );
+    expect(newerTable[0]?.table_name).toBeNull();
     expect(
       await prisma.auditLog.count({
         where: {

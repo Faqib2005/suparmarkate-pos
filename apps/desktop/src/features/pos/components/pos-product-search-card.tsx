@@ -339,7 +339,6 @@ export const PosProductSearchCard = forwardRef<
                   {rows[virtualRow.index]?.map((product, columnIndex) => {
                     const productIndex =
                       virtualRow.index * columnCount + columnIndex;
-                    const hasBarcode = Boolean(product.barcode);
                     const price = getDefaultSalePrice(product) / currencyRate;
                     const availability = productAvailability(product);
 
@@ -382,7 +381,7 @@ export const PosProductSearchCard = forwardRef<
                           <Button
                             size="icon"
                             variant="outline"
-                            disabled={!hasBarcode || product.isActive === false}
+                            disabled={product.isActive === false}
                             onClick={() =>
                               onAddProduct(product.barcode || "", product.id)
                             }

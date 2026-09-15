@@ -250,6 +250,14 @@ async function restoreDump(filePath: string) {
       AND pid <> pg_backend_pid();
   `);
 
+  // pg_restore --clean only removes objects that also exist in the archive.
+  // A full restore must reset the application schema so newer destination
+  // objects cannot survive an older backup and conflict with migrations.
+  await executeSql(`
+    DROP SCHEMA IF EXISTS public CASCADE;
+    CREATE SCHEMA public AUTHORIZATION CURRENT_USER;
+  `);
+
   const restoreArgs = [
     "--clean",
     "--if-exists",

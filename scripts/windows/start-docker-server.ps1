@@ -155,10 +155,24 @@ function Set-EnvFileValue([string]$Path, [string]$Name, [string]$Value) {
 }
 
 function Get-ContainerConfig([string]$ContainerName) {
-  $json = docker inspect $ContainerName 2>$null
-  if ($LASTEXITCODE -ne 0 -or -not $json) { return $null }
-  $items = $json | ConvertFrom-Json
-  return @($items)[0]
+  $process = New-Object System.Diagnostics.Process
+  $process.StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $process.StartInfo.FileName = "docker"
+  $process.StartInfo.Arguments = "inspect `"$ContainerName`""
+  $process.StartInfo.UseShellExecute = $false
+  $process.StartInfo.RedirectStandardOutput = $true
+  $process.StartInfo.RedirectStandardError = $true
+  $process.StartInfo.CreateNoWindow = $true
+  try {
+    $null = $process.Start()
+    $json = $process.StandardOutput.ReadToEnd()
+    $process.WaitForExit()
+    if ($process.ExitCode -ne 0 -or -not $json.Trim()) { return $null }
+    $items = $json | ConvertFrom-Json
+    return @($items)[0]
+  } finally {
+    $process.Dispose()
+  }
 }
 
 function Get-ContainerEnvValue($Container, [string]$Name) {

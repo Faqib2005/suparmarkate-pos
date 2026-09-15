@@ -680,6 +680,7 @@ export default function App() {
   const [isAttendanceBusy, setIsAttendanceBusy] = useState(false);
 
   const socketRef = useRef<WebSocket | null>(null);
+  const cartRevisionRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const qrLockRef = useRef(false);
   const attendanceLockRef = useRef(false);
@@ -1198,12 +1199,18 @@ export default function App() {
   submitAttendanceQrRef.current = submitAttendanceQr;
 
   const applyServerCart = useCallback((serverCart: any) => {
+    const nextRevision = Number(serverCart?.revision);
+    if (Number.isFinite(nextRevision)) {
+      if (nextRevision < cartRevisionRef.current) return;
+      cartRevisionRef.current = nextRevision;
+    }
+
     const serverItems = Array.isArray(serverCart?.items)
       ? serverCart.items
       : [];
 
     const nextCart: CartItem[] = serverItems.map((item: any) => ({
-      key: String(item.key || `${item.productId}:${item.unitId}`),
+      key: String(item.key || `${item.productId}:${item.warehouseId || ""}`),
       productId: String(item.productId || ""),
       productName: String(item.productName || ""),
       barcode: String(item.barcode || ""),
@@ -1237,10 +1244,9 @@ export default function App() {
       }
 
       const product = payload.product;
-      const totalStock = Number(payload.totalStock || 0);
-      const recommendedLot = payload.recommendedLot || null;
+      const totalStock = Number(payload.availableBaseQuantity ?? payload.totalStock ?? 0);
 
-      if (!recommendedLot || totalStock <= 0) {
+      if (totalStock <= 0) {
         setStatusText(`${T.outOfStockPrefix}${product.name}`);
         showToast(`${T.outOfStockPrefix}${product.name}`, "error");
         return;
@@ -1252,62 +1258,6 @@ export default function App() {
 
       // Cart content is synced from the server via CART_UPDATED.
       return;
-
-      const defaultSaleUnit =
-        payload.defaultSaleUnit ||
-        (product.units || []).find((item: any) => item.isDefaultSale) ||
-        (product.units || [])[0] ||
-        null;
-
-      const unitId = defaultSaleUnit?.unitId || product.baseUnitId || "unit";
-      const unitName =
-        defaultSaleUnit?.unit?.shortName ||
-        defaultSaleUnit?.unit?.name ||
-        product.baseUnit?.shortName ||
-        product.baseUnit?.name ||
-        T.unit;
-
-      const unitPrice = Number(defaultSaleUnit?.salePrice || 0);
-      const key = `${product.id}:${unitId}`;
-
-      setCart((prev) => {
-        const exists = prev.find((item) => item.key === key);
-
-        if (exists) {
-          return prev.map((item) => {
-            if (item.key !== key) {
-              return item;
-            }
-
-            const quantity = item.quantity + 1;
-
-            return {
-              ...item,
-              quantity,
-              lineTotal: quantity * item.unitPrice,
-            };
-          });
-        }
-
-        return [
-          {
-            key,
-            productId: product.id,
-            productName: product.name,
-            barcode: product.barcode || "",
-            unitName,
-            unitPrice,
-            quantity: 1,
-            lineTotal: unitPrice,
-            expiryDate: recommendedLot?.expiryDate || null,
-          },
-          ...prev,
-        ];
-      });
-
-      setStatusText(`${T.addedPrefix}${product.name}`);
-      showToast(`${product.name}${T.addedSuffix}`, "success");
-      vibrateSuccess();
     },
     [showToast],
   );
@@ -1347,6 +1297,13 @@ export default function App() {
           }
 
           if (message.type === "SCAN_ERROR") {
+            const msg = message.payload?.message || T.scanFail;
+            setStatusText(msg);
+            showToast(msg, "error");
+            return;
+          }
+
+          if (message.type === "MESSAGE_ERROR") {
             const msg = message.payload?.message || T.scanFail;
             setStatusText(msg);
             showToast(msg, "error");

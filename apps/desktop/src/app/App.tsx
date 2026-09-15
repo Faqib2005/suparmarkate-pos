@@ -39,10 +39,13 @@ import {
   HeartPulse,
   Landmark,
   LogOut,
+  Menu,
   Maximize2,
   Minimize2,
   Package,
   Paperclip,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   Printer,
   RefreshCcw,
@@ -115,6 +118,7 @@ import {
 import { AccountingPage } from "@/features/accounting/components/accounting-page";
 import { PosPage } from "@/features/pos/components/pos-page";
 import { ProductDuplicatesDialog } from "@/features/products/product-duplicates-dialog";
+import { PosDataQualityDialog } from "@/features/products/pos-data-quality-dialog";
 import {
   API_BASE_URL,
   getStoredApiBaseUrl,
@@ -1448,6 +1452,9 @@ function ShellHeader({
   theme,
   onToggleTheme,
   onLogout,
+  onOpenNavigation,
+  onToggleSidebar,
+  isSidebarCollapsed,
   isDesktop,
 }: {
   auth: AuthUser;
@@ -1457,6 +1464,9 @@ function ShellHeader({
   theme: ThemeMode;
   onToggleTheme: () => void;
   onLogout: () => void;
+  onOpenNavigation?: () => void;
+  onToggleSidebar?: () => void;
+  isSidebarCollapsed?: boolean;
   isDesktop: boolean;
 }) {
   const [isMaximized, setIsMaximized] = useState(false);
@@ -1510,7 +1520,7 @@ function ShellHeader({
     >
       <div
         className={[
-          "flex h-full w-full min-w-0 items-center gap-5 flex-row px-4  justify-end",
+          "flex h-full w-full min-w-0 items-center justify-end gap-2 px-3 sm:gap-3 sm:px-4",
           isDesktop ? "pl-[210px]" : "",
         ].join(" ")}
       >
@@ -1529,22 +1539,50 @@ function ShellHeader({
             <UserRound className="size-5" />
           </div>
           <div>
-            <CardTitle className="text-sm">{auth.displayName}</CardTitle>
-            <CardDescription className="text-xs">{auth.role || "بدون رول"}</CardDescription>
+            <CardTitle className="hidden text-sm sm:block">{auth.displayName}</CardTitle>
+            <CardDescription className="hidden text-xs sm:block">
+              {auth.role || "بدون رول"}
+            </CardDescription>
           </div>
         </div>
 
-        <div className="flex h-9 items-center justify-center gap-2 rounded-xl border border-border bg-background px-4 text-sm text-muted-foreground">
+        <div className="hidden h-9 items-center justify-center gap-2 rounded-xl border border-border bg-background px-4 text-sm text-muted-foreground md:flex">
           <CalendarDays className="size-4" />
           <span>{today}</span>
         </div>
 
-        <div className="me-auto flex items-center justify-end gap-3">
-          <div className="text-end">
-            <CardTitle className="text-sm">{currentLabel}</CardTitle>
-            <CardDescription className="text-xs">Muhaseb / LAN Ready</CardDescription>
+        <div className="me-auto flex min-w-0 items-center justify-end gap-2 sm:gap-3">
+          {onToggleSidebar ? (
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label={isSidebarCollapsed ? "باز کردن سایدبار" : "جمع کردن سایدبار"}
+              title={isSidebarCollapsed ? "باز کردن سایدبار" : "جمع کردن سایدبار"}
+              onClick={onToggleSidebar}
+            >
+              {isSidebarCollapsed ? (
+                <PanelRightOpen className="size-5" />
+              ) : (
+                <PanelRightClose className="size-5" />
+              )}
+            </Button>
+          ) : null}
+          {onOpenNavigation ? (
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="باز کردن منوی اصلی"
+              title="منوی اصلی"
+              onClick={onOpenNavigation}
+            >
+              <Menu className="size-5" />
+            </Button>
+          ) : null}
+          <div className="min-w-0 text-end">
+            <CardTitle className="truncate text-xs sm:text-sm">{currentLabel}</CardTitle>
+            <CardDescription className="hidden text-xs sm:block">Muhaseb / LAN Ready</CardDescription>
           </div>
-          <Badge className="rounded-xl border-primary/30 bg-primary/10 px-3 py-2 text-primary">
+          <Badge className="hidden rounded-xl border-primary/30 bg-primary/10 px-3 py-2 text-primary sm:inline-flex">
             Offline
           </Badge>
           <Button
@@ -1672,6 +1710,15 @@ function AdminShell({
 }) {
   const location = useLocation();
   const [alertCount, setAlertCount] = useState(0);
+  const [isMobileNavigationOpen, setIsMobileNavigationOpen] = useState(false);
+  const [isCompactNavigation, setIsCompactNavigation] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 767px) and (pointer: coarse)").matches,
+  );
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
+    () => localStorage.getItem("muhaseb.sidebarCollapsed") === "true",
+  );
   const visibleNavItems = useMemo(
     () => navItems.filter((item) => canAccessNav(auth, item.to)),
     [auth],
@@ -1735,39 +1782,88 @@ function AdminShell({
     };
   }, [auth, location.pathname]);
 
+  useEffect(() => {
+    setIsMobileNavigationOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    // Desktop browsers can be zoomed until their CSS width looks like a phone.
+    // Keep the collapsible desktop sidebar for a mouse/trackpad, and use the drawer
+    // only for narrow touch-first devices.
+    const mediaQuery = window.matchMedia("(max-width: 767px) and (pointer: coarse)");
+    const syncNavigationMode = () => setIsCompactNavigation(mediaQuery.matches);
+    syncNavigationMode();
+    mediaQuery.addEventListener("change", syncNavigationMode);
+    return () => mediaQuery.removeEventListener("change", syncNavigationMode);
+  }, []);
+
+  useEffect(() => {
+    if (!isCompactNavigation) setIsMobileNavigationOpen(false);
+  }, [isCompactNavigation]);
+
+  useEffect(() => {
+    localStorage.setItem("muhaseb.sidebarCollapsed", String(isSidebarCollapsed));
+  }, [isSidebarCollapsed]);
+
   return (
     <div>
-      <main className="grid min-h-screen grid-cols-[288px_1fr] gap-4 bg-background p-4 max-lg:grid-cols-1">
-        <Sidebar className="sticky top-4 h-[calc(100vh-2rem)] max-lg:relative max-lg:top-0 max-lg:h-auto">
+      <main
+        className={`grid min-h-screen gap-4 bg-background p-3 sm:p-4 ${
+          isCompactNavigation
+            ? "grid-cols-1"
+            : isSidebarCollapsed
+              ? "grid-cols-[76px_1fr]"
+              : "grid-cols-[288px_1fr]"
+        }`}
+      >
+        {!isCompactNavigation ? (
+          <Sidebar
+            className={`sticky top-4 h-[calc(100vh-2rem)] transition-[width] duration-200 ${
+              isSidebarCollapsed ? "w-[76px]" : "w-full"
+            }`}
+          >
           <SidebarHeader>
-            <div className="flex items-center gap-3 rounded-xl border border-sidebar-border bg-sidebar-accent p-4">
-              <div className="flex size-12 items-center justify-center rounded-xl border border-primary/25 bg-background">
+            <div
+              className={`flex items-center rounded-xl border border-sidebar-border bg-sidebar-accent p-3 ${
+                isSidebarCollapsed ? "justify-center" : "gap-3"
+              }`}
+            >
+              <div className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-background">
                 <img
                   src={appAssetPath("/logo.png")}
                   alt="Muhaseb"
-                  className="size-10 object-contain"
+                  className="size-9 object-contain"
                 />
               </div>
-              <div>
+              <div className={isSidebarCollapsed ? "hidden" : "min-w-0"}>
                 <h1 className="text-lg font-bold">Muhaseb</h1>
-                <p className="text-xs text-muted-foreground">سیستم مدیریت سوپرمارکیت</p>
+                <p className="truncate text-xs text-muted-foreground">سیستم مدیریت سوپرمارکیت</p>
               </div>
             </div>
           </SidebarHeader>
 
-          <SidebarContent>
+          <SidebarContent className={isSidebarCollapsed ? "px-2" : undefined}>
             <SidebarMenu>
               {navGroups.map((group) => (
                 <div key={group.group} className="space-y-1">
-                  <p className="px-3 pt-3 text-[11px] font-medium text-sidebar-foreground/55">
+                  <p
+                    className={`pt-3 text-[11px] font-medium text-sidebar-foreground/55 ${
+                      isSidebarCollapsed ? "sr-only" : "px-3"
+                    }`}
+                  >
                     {group.group}
                   </p>
                   {group.items.map((item) => (
-                    <NavLink key={item.to} to={item.to} className="contents">
+                    <NavLink key={item.to} to={item.to} className="contents" title={item.label}>
                       {({ isActive }) => (
-                        <SidebarMenuButton isActive={isActive}>
+                        <SidebarMenuButton
+                          isActive={isActive}
+                          className={isSidebarCollapsed ? "justify-center gap-0 px-2" : undefined}
+                        >
                           <item.icon className="size-5" />
-                          <span>{item.label}</span>
+                          <span className={isSidebarCollapsed ? "sr-only" : undefined}>
+                            {item.label}
+                          </span>
                         </SidebarMenuButton>
                       )}
                     </NavLink>
@@ -1776,7 +1872,8 @@ function AdminShell({
               ))}
             </SidebarMenu>
           </SidebarContent>
-        </Sidebar>
+          </Sidebar>
+        ) : null}
 
         <section className="min-w-0">
           <ShellHeader
@@ -1787,11 +1884,85 @@ function AdminShell({
             theme={theme}
             onToggleTheme={onToggleTheme}
             onLogout={onLogout}
+            onOpenNavigation={
+              isCompactNavigation ? () => setIsMobileNavigationOpen(true) : undefined
+            }
+            onToggleSidebar={
+              !isCompactNavigation ? () => setIsSidebarCollapsed((current) => !current) : undefined
+            }
+            isSidebarCollapsed={!isCompactNavigation && isSidebarCollapsed}
             isDesktop={isDesktop}
           />
           {children}
         </section>
       </main>
+
+      {isCompactNavigation ? (
+        <Dialog open={isMobileNavigationOpen} onOpenChange={setIsMobileNavigationOpen}>
+        <DialogContent
+          dir="rtl"
+          showCloseButton={false}
+          className="inset-y-0 inset-s-0 top-0 flex h-dvh min-h-0 w-[min(22rem,calc(100vw-1.5rem))] max-w-none flex-col gap-0 translate-x-0 translate-y-0 overflow-hidden rounded-s-none border-y-0 border-s-0 p-0 shadow-2xl rtl:translate-x-0"
+        >
+          <Sidebar className="h-full min-h-0 overflow-hidden rounded-none border-0 bg-sidebar shadow-none">
+            <SidebarHeader className="shrink-0 p-3">
+              <div className="flex items-center gap-3 rounded-lg border border-sidebar-border bg-sidebar-accent p-3">
+                <div className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-background">
+                  <img
+                    src={appAssetPath("/logo.png")}
+                    alt="Muhaseb"
+                    className="size-9 object-contain"
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h2 className="truncate text-base font-bold">Muhaseb</h2>
+                  <p className="truncate text-xs text-muted-foreground">سیستم مدیریت سوپرمارکیت</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="بستن منوی اصلی"
+                  title="بستن"
+                  onClick={() => setIsMobileNavigationOpen(false)}
+                >
+                  <X className="size-5" />
+                </Button>
+              </div>
+            </SidebarHeader>
+
+            <SidebarContent
+              className="min-h-0 flex-1 touch-pan-y overflow-y-scroll overscroll-contain pb-6 [-webkit-overflow-scrolling:touch]"
+              style={{ WebkitOverflowScrolling: "touch" }}
+            >
+              <SidebarMenu>
+                {navGroups.map((group) => (
+                  <div key={group.group} className="space-y-1">
+                    <p className="px-3 pt-3 text-[11px] font-medium text-sidebar-foreground/55">
+                      {group.group}
+                    </p>
+                    {group.items.map((item) => (
+                      <NavLink
+                        key={item.to}
+                        to={item.to}
+                        className="contents"
+                        onClick={() => setIsMobileNavigationOpen(false)}
+                      >
+                        {({ isActive }) => (
+                          <SidebarMenuButton isActive={isActive} className="min-h-11">
+                            <item.icon className="size-5" />
+                            <span>{item.label}</span>
+                          </SidebarMenuButton>
+                        )}
+                      </NavLink>
+                    ))}
+                  </div>
+                ))}
+              </SidebarMenu>
+            </SidebarContent>
+          </Sidebar>
+        </DialogContent>
+        </Dialog>
+      ) : null}
     </div>
   );
 }
@@ -8756,15 +8927,18 @@ function ProductsPage() {
   const [barcodeFilter, setBarcodeFilter] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [duplicatesDialogOpen, setDuplicatesDialogOpen] = useState(false);
+  const [posDataQualityDialogOpen, setPosDataQualityDialogOpen] = useState(false);
   const [form, setForm] = useState<ProductFormState>(emptyProductForm);
   const [productImageFile, setProductImageFile] = useState<File | null>(null);
   const [productImagePreview, setProductImagePreview] = useState("");
   const [productUnitLines, setProductUnitLines] = useState<ProductUnitForm[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSavingProduct, setIsSavingProduct] = useState(false);
   const productsRequestSeqRef = useRef(0);
   const productsRequestAbortRef = useRef<AbortController | null>(null);
   const productLookupsLoadedRef = useRef(false);
   const didMountProductFiltersRef = useRef(false);
+  const productSaveInFlightRef = useRef(false);
 
   const loadProductsData = async (page = productsPagination?.page || 1) => {
     const requestSeq = productsRequestSeqRef.current + 1;
@@ -8949,6 +9123,8 @@ function ProductsPage() {
   };
 
   const saveProduct = async () => {
+    if (productSaveInFlightRef.current) return;
+
     if (!form.name.trim() || !form.baseUnitId) {
       toast.error("نام کالا و واحد پایه ضروری است");
       return;
@@ -8990,6 +9166,8 @@ function ProductsPage() {
       return;
     }
 
+    productSaveInFlightRef.current = true;
+    setIsSavingProduct(true);
     try {
       const payload = {
         name: form.name.trim(),
@@ -9067,6 +9245,9 @@ function ProductsPage() {
       await loadProductsData();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "عملیات محصول ناکام شد");
+    } finally {
+      productSaveInFlightRef.current = false;
+      setIsSavingProduct(false);
     }
   };
 
@@ -9221,6 +9402,12 @@ function ProductsPage() {
                 بارکدهای تکراری
               </Button>
             ) : null}
+            {isAdmin ? (
+              <Button variant="outline" onClick={() => setPosDataQualityDialogOpen(true)}>
+                <ShieldCheck className="size-4" />
+                آمادگی POS
+              </Button>
+            ) : null}
             <Button onClick={openCreate}>
               <Plus className="size-4" />
               ثبت کالا
@@ -9273,9 +9460,24 @@ function ProductsPage() {
         onEditProduct={(productId) => openEdit({ id: productId })}
         onMerged={() => loadProductsData(1)}
       />
+      <PosDataQualityDialog
+        open={posDataQualityDialogOpen}
+        onOpenChange={setPosDataQualityDialogOpen}
+        onEditProduct={(productId) => openEdit({ id: productId })}
+      />
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent dir="rtl" className="sm:max-w-6xl">
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && isSavingProduct) return;
+          setDialogOpen(nextOpen);
+        }}
+      >
+        <DialogContent
+          dir="rtl"
+          className="sm:max-w-6xl"
+          showCloseButton={!isSavingProduct}
+        >
           <DialogHeader>
             <DialogTitle>{form.id ? "ویرایش کالا" : "ثبت کالای جدید"}</DialogTitle>
             <DialogDescription>
@@ -9698,10 +9900,16 @@ function ProductsPage() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setDialogOpen(false)}
+              disabled={isSavingProduct}
+            >
               لغو
             </Button>
-            <Button onClick={saveProduct}>ذخیره کالا</Button>
+            <Button onClick={saveProduct} disabled={isSavingProduct}>
+              {isSavingProduct ? "در حال ثبت..." : "ذخیره کالا"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -9896,6 +10104,7 @@ function InventoryPage() {
   const inventoryLookupsLoadedRef = useRef(false);
   const inventoryProductSearchSeqRef = useRef(0);
   const inventoryProductSearchAbortRef = useRef<AbortController | null>(null);
+  const selectedInventoryProductIdRef = useRef("");
   const didMountStockQueryRef = useRef(false);
   const didMountMovementQueryRef = useRef(false);
   const didMountMovementDateRef = useRef(false);
@@ -10178,7 +10387,11 @@ function InventoryPage() {
       const rows = await searchProductLookupOptions(query, abortController.signal);
       if (requestSeq !== inventoryProductSearchSeqRef.current) return;
       setProducts((current) =>
-        replaceLookupOptionsKeepingSelected(current, rows, form.productId ? [form.productId] : []),
+        replaceLookupOptionsKeepingSelected(
+          current,
+          rows,
+          selectedInventoryProductIdRef.current ? [selectedInventoryProductIdRef.current] : [],
+        ),
       );
     } catch (error: any) {
       if (error?.name === "AbortError") return;
@@ -10343,6 +10556,7 @@ function InventoryPage() {
   const openAction = (type: InventoryActionForm["type"]) => {
     const baseCurrency = currencies.find((item) => item.isBase) || currencies[0];
     const firstProductId = products[0]?.id || "";
+    selectedInventoryProductIdRef.current = firstProductId;
     const unitId = defaultInventoryUnitId(firstProductId);
     setForm({
       ...emptyInventoryActionForm,
@@ -10759,8 +10973,9 @@ function InventoryPage() {
               label="جنس"
               value={form.productId}
               options={products}
-              onSearchChange={searchInventoryProducts}
-              onChange={(value) =>
+            onSearchChange={searchInventoryProducts}
+              onChange={(value) => {
+                selectedInventoryProductIdRef.current = value;
                 setForm((current) => {
                   const unitId = defaultInventoryUnitId(value);
 
@@ -10775,8 +10990,8 @@ function InventoryPage() {
                         : current.unitCost,
                     expiryDate: productHasExpiry(products, value) ? current.expiryDate : "",
                   };
-                })
-              }
+                });
+              }}
             />
             <LookupSelect
               label={form.type === "TRANSFER" ? "گدام مبدا" : "گدام"}

@@ -129,6 +129,9 @@ export function PosStockIncreaseDialog({
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [saving, setSaving] = useState(false);
   const productRequestAbortRef = useRef<AbortController | null>(null);
+  const productRequestSequenceRef = useRef(0);
+  const productsRef = useRef<ProductSearchItem[]>(initialProducts);
+  const selectedProductRef = useRef<ProductSearchItem | null>(null);
   const operationRef = useRef<{ signature: string; id: string } | null>(null);
 
   const unitOptions = useMemo(
@@ -144,10 +147,14 @@ export function PosStockIncreaseDialog({
       : numberValue(unitCost);
 
   useEffect(() => {
+    productsRef.current = products;
+  }, [products]);
+
+  useEffect(() => {
     if (!open) return;
 
     setProducts((current) => {
-      const selected = current.find((item) => item.id === selectedProduct?.id);
+      const selected = selectedProductRef.current;
       return selected
         ? [selected, ...initialProducts.filter((item) => item.id !== selected.id)]
         : initialProducts;
@@ -158,14 +165,17 @@ export function PosStockIncreaseDialog({
     if (!open) return;
 
     productRequestAbortRef.current?.abort();
+    const requestSequence = productRequestSequenceRef.current + 1;
+    productRequestSequenceRef.current = requestSequence;
     const abortController = new AbortController();
     productRequestAbortRef.current = abortController;
 
-    const timer = window.setTimeout(() => void (async () => {
+    void (async () => {
       const search = productSearch.trim();
       if (!search) {
         setProducts((current) => {
-          const selected = current.find((item) => item.id === selectedProduct?.id);
+          if (requestSequence !== productRequestSequenceRef.current) return current;
+          const selected = selectedProductRef.current;
           return selected
             ? [selected, ...initialProducts.filter((item) => item.id !== selected.id)]
             : initialProducts;
@@ -186,7 +196,8 @@ export function PosStockIncreaseDialog({
           signal: abortController.signal,
         });
         setProducts((current) => {
-          const selected = current.find((item) => item.id === selectedProduct?.id);
+          if (requestSequence !== productRequestSequenceRef.current) return current;
+          const selected = selectedProductRef.current;
           return selected
             ? [selected, ...response.data.filter((item) => item.id !== selected.id)]
             : response.data;
@@ -202,10 +213,9 @@ export function PosStockIncreaseDialog({
           setLoadingProducts(false);
         }
       }
-    })(), 250);
+    })();
 
     return () => {
-      window.clearTimeout(timer);
       abortController.abort();
     };
   }, [apiBaseUrl, initialProducts, open, productSearch, warehouse?.id]);
@@ -228,6 +238,7 @@ export function PosStockIncreaseDialog({
   }
 
   function resetForm() {
+    selectedProductRef.current = null;
     setSelectedProduct(null);
     setUnitId("");
     setQuantity(1);
@@ -236,6 +247,18 @@ export function PosStockIncreaseDialog({
     setNote("");
     setProductSearch("");
     operationRef.current = null;
+  }
+
+  function selectProduct(productId: string) {
+    const product = productsRef.current.find((item) => item.id === productId) || null;
+    if (!product) {
+      toast.error("محصول انتخاب‌شده دیگر در نتایج جستجو نیست؛ دوباره جستجو کنید");
+      return;
+    }
+
+    selectedProductRef.current = product;
+    setSelectedProduct(product);
+    setProducts((current) => [product, ...current.filter((item) => item.id !== product.id)]);
   }
 
   function closeDialog() {
@@ -377,10 +400,7 @@ export function PosStockIncreaseDialog({
                 searchPlaceholder="جستجو با نام، کد یا بارکود..."
                 emptyText={loadingProducts ? "در حال جستجو..." : "محصولی پیدا نشد"}
                 onSearchChange={setProductSearch}
-                onValueChange={(value) => {
-                  const product = products.find((item) => item.id === value) || null;
-                  setSelectedProduct(product);
-                }}
+                onValueChange={selectProduct}
               />
             </label>
 

@@ -15,6 +15,7 @@ import {
   getPosSessionSettings,
   getPosSessions,
   handlePosBarcodeScan,
+  revalidatePosCart,
   removePosCartItem,
   updatePosCartItem,
   updatePosSessionSettings
@@ -29,9 +30,12 @@ const createSessionSchema = z.object({
 
 const scanSchema = z.object({
   sessionId: z.string().min(1),
-  barcode: z.string().trim().min(1),
+  barcode: z.string().trim().optional().default(""),
   productId: z.string().trim().optional().nullable(),
   warehouseId: z.string().trim().optional().nullable()
+}).refine((value) => Boolean(value.barcode || value.productId), {
+  message: "barcode or productId is required",
+  path: ["barcode"],
 });
 
 function getConfiguredPublicBaseUrl() {
@@ -125,16 +129,20 @@ posRoute.patch("/sessions/:id/settings", async (c) => {
   const id = c.req.param("id");
   const body = await c.req.json().catch(() => ({}));
 
-  return c.json({
-    data: {
-      settings: updatePosSessionSettings({
+  try {
+    return c.json({
+      data: {
+        settings: updatePosSessionSettings({
         sessionId: id,
         warehouseId: body.warehouseId === undefined ? undefined : body.warehouseId || null,
         currencyId: body.currencyId === undefined ? undefined : body.currencyId || null,
         exchangeRate: body.exchangeRate === undefined ? undefined : Number(body.exchangeRate || 1)
-      })
-    }
-  });
+        })
+      }
+    });
+  } catch (error) {
+    return c.json({ message: error instanceof Error ? error.message : "تغییر تنظیمات POS ناکام شد" }, 409);
+  }
 });
 
 
@@ -201,6 +209,11 @@ posRoute.get("/sessions/:id/cart", (c) => {
       summary: getPosCartSummary(id)
     }
   });
+});
+
+posRoute.post("/sessions/:id/cart/revalidate", async (c) => {
+  const result = await revalidatePosCart(c.req.param("id"));
+  return c.json({ data: result });
 });
 
 posRoute.delete("/sessions/:id/cart", (c) => {
@@ -404,7 +417,8 @@ posRoute.post("/scan", async (c) => {
   });
 
   if (!result.ok) {
-    return c.json(result, result.statusCode === 409 ? 409 : 404);
+    const status = result.statusCode === 409 ? 409 : result.statusCode === 400 ? 400 : 404;
+    return c.json(result, status);
   }
 
   return c.json({

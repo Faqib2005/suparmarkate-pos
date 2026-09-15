@@ -141,6 +141,16 @@ function dependencies(overrides: Record<string, unknown> = {}) {
     applySchemaAndSeed: vi.fn(async () => {
       events.push("migrate-seed");
     }),
+    repairInventory: vi.fn(async () => {
+      events.push("repair-inventory");
+      return {
+        negativeLotsRepaired: 1,
+        negativeQuantityCorrected: 8,
+        smallLedgerMismatchesRepaired: 1,
+        ledgerQuantityCorrected: 0.0002,
+        sampleOperationIds: ["repair-operation"]
+      };
+    }),
     disconnectDatabase: vi.fn(async () => {
       events.push("disconnect");
     }),
@@ -191,12 +201,17 @@ describe("backup restore orchestration", () => {
       "disconnect",
       "restore-target",
       "migrate-seed",
+      "repair-inventory",
       "clear-cache",
       "revoke-sessions",
       "integrity",
       "audit-not-required",
       "maintenance-off"
     ]);
+    expect(result.inventoryRepair).toMatchObject({
+      negativeLotsRepaired: 1,
+      smallLedgerMismatchesRepaired: 1
+    });
   });
 
   it("does not create a safety backup or enter maintenance for invalid input", async () => {
@@ -238,6 +253,7 @@ describe("backup restore orchestration", () => {
       safetyBackup: "safety.dump"
     });
     expect(events).toContain("restore-safety");
+    expect(deps.repairInventory).toHaveBeenCalledTimes(1);
     expect(events.at(-2)).toBe("audit-completed");
     expect(events.at(-1)).toBe("maintenance-off");
   });

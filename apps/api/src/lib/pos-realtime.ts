@@ -57,23 +57,29 @@ type PosCartItem = {
     isDefaultSale: boolean;
   }>;
   quantity: number;
+  quantityBase: number;
   unitPrice: number;
   discount: number;
   lineTotal: number;
+  availableBaseQuantity: number;
+  lotCount: number;
+  nextExpiryDate: Date | null;
+  // Kept for older Desktop/Mobile clients during the rolling update.
   totalStock: number;
   expiryDate: Date | null;
-  lotId: string | null;
 };
 
 type PosCart = {
   sessionId: string;
   items: PosCartItem[];
+  revision: number;
   updatedAt: Date;
 };
 
 const sessions = new Map<string, PosSession>();
 const clientsBySession = new Map<string, Map<string, PosClient>>();
 const cartsBySession = new Map<string, PosCart>();
+const cartRevisionBySession = new Map<string, number>();
 const settingsBySession = new Map<string, PosSessionSettings>();
 
 type HeldPosCart = {
@@ -119,6 +125,68 @@ function touchSession(sessionId: string) {
   if (session) session.lastActivityAt = new Date();
 }
 
+function roundCartBaseQuantity(value: number) {
+  return Math.max(MIN_CART_QUANTITY, Math.round(Number(value || 0) * 10000) / 10000);
+}
+
+function nextCartRevision(sessionId: string) {
+  const next = (cartRevisionBySession.get(sessionId) || 0) + 1;
+  cartRevisionBySession.set(sessionId, next);
+  return next;
+}
+
+function touchCart(sessionId: string, cart: PosCart) {
+  cart.revision = nextCartRevision(sessionId);
+  cart.updatedAt = new Date();
+  cartsBySession.set(sessionId, cart);
+  touchSession(sessionId);
+  return cart;
+}
+
+function cartItemBaseQuantity(item: Pick<PosCartItem, "quantity" | "conversionRate"> & { quantityBase?: number }) {
+  const stored = Number(item.quantityBase);
+  if (Number.isFinite(stored) && stored > 0) return roundCartBaseQuantity(stored);
+  return roundCartBaseQuantity(Number(item.quantity || 0) * Number(item.conversionRate || 1));
+}
+
+function quantityForUnit(quantityBase: number, conversionRate: number) {
+  if (Number(quantityBase || 0) <= 0) return 0;
+  return normalizeCartQuantity(
+    roundCartBaseQuantity(quantityBase) / Math.max(Number(conversionRate || 1), MIN_CART_QUANTITY),
+    MIN_CART_QUANTITY,
+  );
+}
+
+class PosCartValidationError extends Error {}
+
+function resolvePosSaleUnit(product: any) {
+  const units = (product.units || []).filter((unit: any) => Number(unit.conversionRate || 0) > 0);
+  const defaults = units.filter((unit: any) => unit.isDefaultSale);
+  const explicitDefault = defaults.length === 1 ? defaults[0] : null;
+
+  if (explicitDefault && Number(explicitDefault.salePrice || 0) > 0) {
+    return { unit: explicitDefault, warning: null as string | null };
+  }
+
+  const baseUnit = units.find((unit: any) => unit.unitId === product.baseUnitId) || null;
+  if (baseUnit && Number(baseUnit.salePrice || 0) > 0) {
+    const warning =
+      defaults.length > 1
+        ? "چند واحد فروش پیش‌فرض ثبت شده است؛ واحد پایه به‌طور موقت استفاده شد"
+        : explicitDefault
+          ? "قیمت واحد فروش پیش‌فرض معتبر نیست؛ واحد پایه به‌طور موقت استفاده شد"
+          : "واحد فروش پیش‌فرض ثبت نشده است؛ واحد پایه به‌طور موقت استفاده شد";
+    return { unit: baseUnit, warning };
+  }
+
+  return {
+    unit: null,
+    warning: null as string | null,
+    error:
+      "برای این محصول واحد فروش پیش‌فرض معتبر با قیمت فروش بیشتر از صفر ثبت نشده است؛ ابتدا واحد و قیمت فروش را اصلاح کنید",
+  };
+}
+
 export function createPosSession(name?: string) {
   const id = randomUUID();
 
@@ -134,8 +202,10 @@ export function createPosSession(name?: string) {
   cartsBySession.set(id, {
     sessionId: id,
     items: [],
+    revision: 0,
     updatedAt: new Date()
   });
+  cartRevisionBySession.set(id, 0);
 
   settingsBySession.set(id, {
     warehouseId: null,
@@ -212,6 +282,20 @@ export function updatePosSessionSettings(input: {
   exchangeRate?: number;
 }) {
   const current = getPosSessionSettings(input.sessionId);
+  const nextWarehouseId =
+    input.warehouseId === undefined ? current.warehouseId : input.warehouseId;
+  const cart = getPosCart(input.sessionId);
+
+  if (
+    input.warehouseId !== undefined &&
+    nextWarehouseId !== current.warehouseId &&
+    cart.items.length > 0
+  ) {
+    throw new PosCartValidationError(
+      "تا زمانی که سبد فروش خالی، ثبت یا معلق نشده است، تغییر گدام مجاز نیست",
+    );
+  }
+
   const currentRate = Number(current.exchangeRate || 1);
   const nextRate =
     input.exchangeRate === undefined
@@ -220,7 +304,7 @@ export function updatePosSessionSettings(input: {
 
   const next = {
     ...current,
-    warehouseId: input.warehouseId === undefined ? current.warehouseId : input.warehouseId,
+    warehouseId: nextWarehouseId,
     currencyId: input.currencyId === undefined ? current.currencyId : input.currencyId,
     exchangeRate: nextRate
   };
@@ -229,7 +313,6 @@ export function updatePosSessionSettings(input: {
   touchSession(input.sessionId);
 
   if (nextRate !== currentRate) {
-    const cart = getPosCart(input.sessionId);
     for (const item of cart.items) {
       item.unitPrice = (item.unitPrice * currentRate) / nextRate;
       item.unitOptions = (item.unitOptions || []).map((option) => ({
@@ -239,7 +322,7 @@ export function updatePosSessionSettings(input: {
       item.discount = (item.discount * currentRate) / nextRate;
       item.lineTotal = Math.max(0, item.quantity * item.unitPrice - item.discount);
     }
-    cart.updatedAt = new Date();
+    touchCart(input.sessionId, cart);
     for (const heldCart of heldCartsBySession.get(input.sessionId) || []) {
       for (const item of heldCart.cart.items) {
         item.unitPrice = (item.unitPrice * currentRate) / nextRate;
@@ -269,11 +352,17 @@ export function updatePosSessionSettings(input: {
 
 export function getPosCart(sessionId: string): PosCart {
   const existing = cartsBySession.get(sessionId);
-  if (existing) return existing;
+  if (existing) {
+    if (!Number.isSafeInteger(existing.revision)) {
+      existing.revision = cartRevisionBySession.get(sessionId) || 0;
+    }
+    return existing;
+  }
 
   const cart = {
     sessionId,
     items: [],
+    revision: cartRevisionBySession.get(sessionId) || 0,
     updatedAt: new Date()
   };
 
@@ -286,6 +375,7 @@ export function getPosCartSummary(sessionId: string) {
 
   return {
     sessionId,
+    revision: cart.revision,
     itemsCount: cart.items.reduce((sum, item) => sum + item.quantity, 0),
     total: cart.items.reduce((sum, item) => sum + item.lineTotal, 0),
     updatedAt: cart.updatedAt
@@ -296,11 +386,11 @@ export function clearPosCart(sessionId: string) {
   const cart = {
     sessionId,
     items: [],
+    revision: cartRevisionBySession.get(sessionId) || 0,
     updatedAt: new Date()
   };
 
-  cartsBySession.set(sessionId, cart);
-  touchSession(sessionId);
+  touchCart(sessionId, cart);
   broadcastCartUpdated(sessionId);
 
   return cart;
@@ -315,84 +405,61 @@ export function updatePosCartItem(input: {
   discount?: number;
 }) {
   const cart = getPosCart(input.sessionId);
-  let updatedItem: PosCartItem | null = null;
-  const remainingItems: PosCartItem[] = [];
-  let originalIndex = -1;
+  const index = cart.items.findIndex((item) => item.key === input.key);
+  if (index < 0) return cart;
 
-  for (const item of cart.items) {
-    if (item.key !== input.key) {
-      remainingItems.push(item);
-      continue;
-    }
-
-    originalIndex = remainingItems.length;
-
-    const quantity =
-      input.quantity === undefined
-        ? item.quantity
-        : normalizeCartQuantity(input.quantity, item.quantity);
-
-    const selectedUnit =
-      input.unitId && input.unitId !== item.unitId
-        ? item.unitOptions?.find((option) => option.unitId === input.unitId)
-        : null;
-    const unitId = selectedUnit?.unitId || item.unitId;
-    const unitName = selectedUnit?.unitName || item.unitName;
-    const conversionRate = selectedUnit?.conversionRate || item.conversionRate || 1;
-    const unitPrice =
-      input.unitPrice !== undefined
-        ? Math.max(0, Number(input.unitPrice || 0))
-        : selectedUnit
-          ? Math.max(0, Number(selectedUnit.salePrice || 0))
-          : item.unitPrice;
-
-    const discount =
-      input.discount === undefined
-        ? item.discount
-        : Math.max(0, Number(input.discount || 0));
-    const key = `${item.productId}:${unitId}:${item.warehouseId}`;
-
-    updatedItem = {
-      ...item,
-      key,
-      unitId,
-      unitName,
-      conversionRate,
-      quantity,
-      unitPrice,
-      discount,
-      lineTotal: Math.max(0, quantity * unitPrice - discount)
-    };
+  const item = cart.items[index]!;
+  const selectedUnit =
+    input.unitId && input.unitId !== item.unitId
+      ? item.unitOptions.find((option) => option.unitId === input.unitId)
+      : null;
+  if (
+    input.unitId &&
+    input.unitId !== item.unitId &&
+    (!selectedUnit ||
+      Number(selectedUnit.conversionRate || 0) <= 0 ||
+      Number(selectedUnit.salePrice || 0) <= 0)
+  ) {
+    throw new PosCartValidationError(
+      "واحد فروش انتخاب‌شده قیمت فروش معتبر یا نرخ تبدیل قابل استفاده ندارد",
+    );
   }
+  const unitId = selectedUnit?.unitId || item.unitId;
+  const unitName = selectedUnit?.unitName || item.unitName;
+  const conversionRate = Number(selectedUnit?.conversionRate || item.conversionRate || 1);
+  // A unit switch represents the cashier choosing a new selling package. Keep the
+  // entered count stable (for example, 2 stays 2) and recalculate its base quantity.
+  const requestedQuantity = normalizeCartQuantity(input.quantity ?? item.quantity, item.quantity);
+  const quantityBase =
+    input.quantity === undefined && !selectedUnit
+      ? cartItemBaseQuantity(item)
+      : roundCartBaseQuantity(requestedQuantity * conversionRate);
+  const quantity = requestedQuantity;
+  const unitPrice =
+    input.unitPrice !== undefined
+      ? Math.max(0, Number(input.unitPrice || 0))
+      : selectedUnit
+        ? Math.max(0, Number(selectedUnit.salePrice || 0))
+        : item.unitPrice;
+  const discount =
+    input.discount === undefined ? item.discount : Math.max(0, Number(input.discount || 0));
 
-  if (updatedItem) {
-    const existingIndex = remainingItems.findIndex((item) => item.key === updatedItem?.key);
-    if (existingIndex >= 0) {
-      const existing = remainingItems[existingIndex];
-      const quantity = normalizeCartQuantity(
-        existing.quantity + updatedItem.quantity,
-        existing.quantity
-      );
-      const discount = existing.discount + updatedItem.discount;
+  // The row identity deliberately does not include the selected unit, so a product keeps one
+  // cart row even when its selling unit changes.
+  cart.items[index] = {
+    ...item,
+    key: `${item.productId}:${item.warehouseId}`,
+    unitId,
+    unitName,
+    conversionRate,
+    quantity,
+    quantityBase,
+    unitPrice,
+    discount,
+    lineTotal: Math.max(0, quantity * unitPrice - discount),
+  };
 
-      remainingItems[existingIndex] = {
-        ...existing,
-        quantity,
-        unitPrice: updatedItem.unitPrice,
-        discount,
-        lineTotal: Math.max(0, quantity * updatedItem.unitPrice - discount)
-      };
-    } else {
-      remainingItems.splice(Math.max(0, originalIndex), 0, updatedItem);
-    }
-  }
-
-  cart.items = remainingItems;
-
-  cart.updatedAt = new Date();
-
-  cartsBySession.set(input.sessionId, cart);
-  touchSession(input.sessionId);
+  touchCart(input.sessionId, cart);
   broadcastCartUpdated(input.sessionId);
 
   return cart;
@@ -417,10 +484,7 @@ export function removePosCartItem(input: {
   const cart = getPosCart(input.sessionId);
 
   cart.items = cart.items.filter((item) => item.key !== input.key);
-  cart.updatedAt = new Date();
-
-  cartsBySession.set(input.sessionId, cart);
-  touchSession(input.sessionId);
+  touchCart(input.sessionId, cart);
   broadcastCartUpdated(input.sessionId);
 
   return cart;
@@ -455,19 +519,16 @@ function addPayloadToCart(input: {
   payload: {
     product: any;
     defaultSaleUnit: any;
-    totalStock: number;
-    recommendedLot: any;
-    lots: any[];
+    warehouse: { id: string; name: string };
+    availableBaseQuantity: number;
+    lotCount: number;
+    nextExpiryDate: Date | null;
   };
 }) {
   const cart = getPosCart(input.sessionId);
   const product = input.payload.product;
 
-  const defaultSaleUnit =
-    input.payload.defaultSaleUnit ||
-    (product.units || []).find((item: any) => item.isDefaultSale) ||
-    (product.units || [])[0] ||
-    null;
+  const defaultSaleUnit = input.payload.defaultSaleUnit;
 
   const unitId = defaultSaleUnit?.unitId || product.baseUnitId;
   const unitName =
@@ -480,26 +541,35 @@ function addPayloadToCart(input: {
   const exchangeRate = Number(getPosSessionSettings(input.sessionId).exchangeRate || 1);
   const unitPrice = Number(defaultSaleUnit?.salePrice || 0) / exchangeRate;
   const conversionRate = Number(defaultSaleUnit?.conversionRate || 1);
-  const unitOptions = (product.units || []).map((item: any) => ({
-    unitId: item.unitId,
-    unitName: item.unit?.shortName || item.unit?.name || "Unit",
-    conversionRate: Number(item.conversionRate || 1),
-    salePrice: Number(item.salePrice || 0) / exchangeRate,
-    isDefaultSale: Boolean(item.isDefaultSale)
-  }));
-  const recommendedLot = input.payload.recommendedLot;
-  const warehouseId = recommendedLot?.warehouseId || "";
-  const warehouseName = recommendedLot?.warehouse?.name || null;
-  const lotId = recommendedLot?.id || null;
-
-  const key = `${product.id}:${unitId}:${warehouseId}`;
+  const unitOptions = (product.units || [])
+    .filter(
+      (item: any) =>
+        Number(item.conversionRate || 0) > 0 && Number(item.salePrice || 0) > 0,
+    )
+    .map((item: any) => ({
+      unitId: item.unitId,
+      unitName: item.unit?.shortName || item.unit?.name || "Unit",
+      conversionRate: Number(item.conversionRate || 1),
+      salePrice: Number(item.salePrice || 0) / exchangeRate,
+      isDefaultSale: Boolean(item.isDefaultSale)
+    }));
+  const warehouseId = input.payload.warehouse.id;
+  const warehouseName = input.payload.warehouse.name;
+  const key = `${product.id}:${warehouseId}`;
 
   const existing = cart.items.find((item) => item.key === key);
 
   if (existing) {
-    existing.quantity += 1;
-    existing.totalStock = Number(input.payload.totalStock || 0);
-    existing.conversionRate = conversionRate;
+    const quantityBase = roundCartBaseQuantity(
+      cartItemBaseQuantity(existing) + Number(existing.conversionRate || 1),
+    );
+    existing.quantityBase = quantityBase;
+    existing.quantity = quantityForUnit(quantityBase, Number(existing.conversionRate || 1));
+    existing.availableBaseQuantity = Number(input.payload.availableBaseQuantity || 0);
+    existing.totalStock = existing.availableBaseQuantity;
+    existing.lotCount = input.payload.lotCount;
+    existing.nextExpiryDate = input.payload.nextExpiryDate;
+    existing.expiryDate = input.payload.nextExpiryDate;
     existing.unitOptions = unitOptions;
     existing.lineTotal = Math.max(0, existing.quantity * existing.unitPrice - existing.discount);
   } else {
@@ -515,21 +585,111 @@ function addPayloadToCart(input: {
       conversionRate,
       unitOptions,
       quantity: 1,
+      quantityBase: roundCartBaseQuantity(conversionRate),
       unitPrice,
       discount: 0,
       lineTotal: unitPrice,
-      totalStock: Number(input.payload.totalStock || 0),
-      expiryDate: recommendedLot?.expiryDate || null,
-      lotId
+      availableBaseQuantity: Number(input.payload.availableBaseQuantity || 0),
+      lotCount: input.payload.lotCount,
+      nextExpiryDate: input.payload.nextExpiryDate,
+      totalStock: Number(input.payload.availableBaseQuantity || 0),
+      expiryDate: input.payload.nextExpiryDate,
     });
   }
 
-  cart.updatedAt = new Date();
-
-  cartsBySession.set(input.sessionId, cart);
-  touchSession(input.sessionId);
+  touchCart(input.sessionId, cart);
 
   return cart;
+}
+
+type PosCartRevalidationIssue = {
+  key: string;
+  productId: string;
+  productName: string;
+  warehouseId: string;
+  requiredBaseQuantity: number;
+  availableBaseQuantity: number;
+  maxSellableQuantity: number;
+  lotCount: number;
+};
+
+export async function revalidatePosCart(sessionId: string) {
+  const cart = getPosCart(sessionId);
+  const targets = Array.from(
+    new Map(
+      cart.items.map((item) => [
+        `${item.productId}:${item.warehouseId}`,
+        { productId: item.productId, warehouseId: item.warehouseId },
+      ]),
+    ).values(),
+  );
+
+  const lots = targets.length
+    ? await prisma.stockLot.findMany({
+        where: {
+          remainingQuantity: { gt: 0 },
+          OR: targets,
+        },
+        select: {
+          productId: true,
+          warehouseId: true,
+          remainingQuantity: true,
+          expiryDate: true,
+          createdAt: true,
+        },
+        orderBy: [{ expiryDate: "asc" }, { createdAt: "asc" }],
+      })
+    : [];
+
+  const availability = new Map<
+    string,
+    { availableBaseQuantity: number; lotCount: number; nextExpiryDate: Date | null }
+  >();
+  for (const lot of lots) {
+    const key = `${lot.productId}:${lot.warehouseId}`;
+    const current = availability.get(key) || {
+      availableBaseQuantity: 0,
+      lotCount: 0,
+      nextExpiryDate: null,
+    };
+    current.availableBaseQuantity += Number(lot.remainingQuantity);
+    current.lotCount += 1;
+    if (!current.nextExpiryDate && lot.expiryDate) current.nextExpiryDate = lot.expiryDate;
+    availability.set(key, current);
+  }
+
+  const issues: PosCartRevalidationIssue[] = [];
+  for (const item of cart.items) {
+    const current = availability.get(`${item.productId}:${item.warehouseId}`) || {
+      availableBaseQuantity: 0,
+      lotCount: 0,
+      nextExpiryDate: null,
+    };
+    const quantityBase = cartItemBaseQuantity(item);
+    item.quantityBase = quantityBase;
+    item.availableBaseQuantity = Math.round(current.availableBaseQuantity * 10000) / 10000;
+    item.totalStock = item.availableBaseQuantity;
+    item.lotCount = current.lotCount;
+    item.nextExpiryDate = current.nextExpiryDate;
+    item.expiryDate = current.nextExpiryDate;
+
+    if (quantityBase > item.availableBaseQuantity) {
+      issues.push({
+        key: item.key,
+        productId: item.productId,
+        productName: item.productName,
+        warehouseId: item.warehouseId,
+        requiredBaseQuantity: quantityBase,
+        availableBaseQuantity: item.availableBaseQuantity,
+        maxSellableQuantity: quantityForUnit(item.availableBaseQuantity, item.conversionRate),
+        lotCount: item.lotCount,
+      });
+    }
+  }
+
+  touchCart(sessionId, cart);
+  broadcastCartUpdated(sessionId);
+  return { cart, summary: getPosCartSummary(sessionId), issues };
 }
 
 export async function handlePosBarcodeScan(input: {
@@ -541,7 +701,7 @@ export async function handlePosBarcodeScan(input: {
 }) {
   const barcode = normalizeBarcodeText(input.barcode);
 
-  if (!barcode) {
+  if (!barcode && !input.productId) {
     const payload = {
       barcode,
       message: "بارکود لازم است"
@@ -553,6 +713,29 @@ export async function handlePosBarcodeScan(input: {
 
   const sessionSettings = getPosSessionSettings(input.sessionId);
   const warehouseIdForScan = input.warehouseId || sessionSettings.warehouseId || null;
+
+  if (!warehouseIdForScan) {
+    const payload = {
+      code: "WAREHOUSE_REQUIRED",
+      message: "ابتدا گدام فعال را انتخاب کنید",
+    };
+    broadcastToPosSession(input.sessionId, "SCAN_ERROR", payload);
+    return { ok: false, statusCode: 400 as const, error: payload };
+  }
+
+  const warehouse = await prisma.warehouse.findFirst({
+    where: { id: warehouseIdForScan, deletedAt: null, isActive: true },
+    select: { id: true, name: true },
+  });
+  if (!warehouse) {
+    const payload = {
+      code: "WAREHOUSE_UNAVAILABLE",
+      message: "گدام فعال انتخاب‌شده پیدا نشد یا غیرفعال است",
+    };
+    broadcastToPosSession(input.sessionId, "SCAN_ERROR", payload);
+    return { ok: false, statusCode: 400 as const, error: payload };
+  }
+
   const productIds = input.productId
     ? [input.productId]
     : await findProductIdsByBarcode(input.barcode);
@@ -594,6 +777,7 @@ export async function handlePosBarcodeScan(input: {
             include: {
               unit: true,
             },
+            orderBy: { createdAt: "asc" },
           },
         },
       })
@@ -622,13 +806,24 @@ export async function handlePosBarcodeScan(input: {
     return { ok: false, error: payload };
   }
 
+  const unitResolution = resolvePosSaleUnit(product);
+  if (!unitResolution.unit) {
+    const payload = {
+      code: "POS_SALE_UNIT_INVALID",
+      product: { id: product.id, name: product.name },
+      message: unitResolution.error,
+    };
+    broadcastToPosSession(input.sessionId, "SCAN_ERROR", payload);
+    return { ok: false, statusCode: 400 as const, error: payload };
+  }
+
   const lots = await prisma.stockLot.findMany({
     where: {
       productId: product.id,
       remainingQuantity: {
         gt: 0
       },
-      ...(warehouseIdForScan ? { warehouseId: warehouseIdForScan } : {})
+      warehouseId: warehouseIdForScan,
     },
     include: {
       warehouse: true
@@ -643,34 +838,32 @@ export async function handlePosBarcodeScan(input: {
     ]
   });
 
-  const totalStock = lots.reduce((sum, lot) => {
+  const availableBaseQuantity = lots.reduce((sum, lot) => {
     return sum + Number(lot.remainingQuantity);
   }, 0);
-
-  const defaultSaleUnit =
-    product.units.find((item) => item.isDefaultSale) || product.units[0] || null;
 
   const payload = {
     sessionId: input.sessionId,
     source: input.source || "http",
     barcode,
     product,
-    defaultSaleUnit,
-    totalStock,
-    lots,
-    recommendedLot: lots[0] || null,
-    activeWarehouseId: warehouseIdForScan
+    defaultSaleUnit: unitResolution.unit,
+    unitResolutionWarning: unitResolution.warning,
+    availableBaseQuantity,
+    totalStock: availableBaseQuantity,
+    lotCount: lots.length,
+    nextExpiryDate: lots[0]?.expiryDate || null,
+    activeWarehouseId: warehouseIdForScan,
+    warehouse,
   };
 
-  if (!payload.recommendedLot || totalStock <= 0) {
+  if (availableBaseQuantity <= 0) {
     const errorPayload = {
       barcode,
       product,
-      totalStock,
+      availableBaseQuantity,
       activeWarehouseId: warehouseIdForScan,
-      message: warehouseIdForScan
-        ? "این محصول در گدام انتخاب‌شده موجودی قابل فروش ندارد"
-        : "موجودی این محصول تمام شده است"
+      message: "این محصول در گدام انتخاب‌شده موجودی قابل فروش ندارد",
     };
 
     broadcastToPosSession(input.sessionId, "SCAN_ERROR", errorPayload);
@@ -721,6 +914,7 @@ export function holdPosCart(input: {
     cart: {
       sessionId: currentCart.sessionId,
       items: currentCart.items.map((item) => ({ ...item })),
+      revision: currentCart.revision,
       updatedAt: new Date(currentCart.updatedAt)
     },
     summary: {
@@ -759,10 +953,11 @@ export function restoreHeldPosCart(input: {
   const restoredCart: PosCart = {
     sessionId: input.sessionId,
     items: held.cart.items.map((item) => ({ ...item })),
+    revision: cartRevisionBySession.get(input.sessionId) || 0,
     updatedAt: new Date()
   };
 
-  cartsBySession.set(input.sessionId, restoredCart);
+  touchCart(input.sessionId, restoredCart);
 
   heldCartsBySession.set(
     input.sessionId,
@@ -984,7 +1179,7 @@ export function startPosWebSocketServer(port = 4001) {
         sendToClient(client, "UNKNOWN_MESSAGE", { message });
       } catch (error) {
         sendToClient(client, "MESSAGE_ERROR", {
-          message: "Invalid websocket message",
+          message: error instanceof Error ? error.message : "عملیات POS ناکام شد",
           error: error instanceof Error ? error.message : String(error)
         });
       }

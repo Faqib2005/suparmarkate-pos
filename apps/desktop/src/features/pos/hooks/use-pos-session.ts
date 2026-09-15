@@ -14,6 +14,7 @@ import {
   loadPosDefaults,
   loadProducts,
   removeCartItem,
+  revalidatePosCart,
   restoreHeldCart,
   scanPosBarcode,
   submitPosSale,
@@ -65,6 +66,8 @@ export function usePosSession() {
   const productRequestAbortRef = useRef<AbortController | null>(null);
   const productMoreRequestAbortRef = useRef<AbortController | null>(null);
   const pendingScanBarcodeRef = useRef<string | null>(null);
+  const cartRevisionRef = useRef(0);
+  const cartRevalidationInFlightRef = useRef(false);
   const submittingSaleRef = useRef(false);
   const saleAttemptRef = useRef<{
     signature: string;
@@ -210,9 +213,10 @@ export function usePosSession() {
   }, [customers]);
 
   const hasCartStockIssue = cartItems.some((item) => {
-    const requiredBaseQuantity =
-      Number(item.quantity || 0) * Number(item.conversionRate || 1);
-    return requiredBaseQuantity > Number(item.totalStock || 0);
+    const requiredBaseQuantity = Number(
+      item.quantityBase ?? Number(item.quantity || 0) * Number(item.conversionRate || 1),
+    );
+    return requiredBaseQuantity > Number(item.availableBaseQuantity ?? item.totalStock ?? 0);
   });
   const selectedCustomerPartyId =
     selectedCustomer?.source?.includes("/api/parties") ||
@@ -240,10 +244,6 @@ export function usePosSession() {
     }
     if (!cartItems.length) issues.push("سبد فروش خالی است");
 
-    if (hasCartStockIssue) {
-      issues.push("تعداد بعضی محصولات بیشتر از موجودی قابل فروش است");
-    }
-
     if (Number(invoiceDiscount || 0) > subtotal) {
       issues.push("تخفیف کلی از جمع اجناس بیشتر است");
     }
@@ -265,7 +265,6 @@ export function usePosSession() {
     splitCashAmount,
     splitCardAmount,
     cartItems.length,
-    hasCartStockIssue,
     invoiceDiscount,
     subtotal,
     payableTotal,
@@ -408,6 +407,12 @@ export function usePosSession() {
   ) {
     if (payload?.cart) {
       const nextCart = payload.cart;
+      const nextRevision = Number(nextCart.revision);
+
+      if (Number.isFinite(nextRevision)) {
+        if (nextRevision < cartRevisionRef.current) return;
+        cartRevisionRef.current = nextRevision;
+      }
 
       setCart((previousCart) => {
         if (!nextCart.items.length) {
@@ -455,7 +460,15 @@ export function usePosSession() {
         const unitId = selectedUnit?.unitId || item.unitId;
         const unitName = selectedUnit?.unitName || item.unitName;
         const conversionRate = selectedUnit?.conversionRate || item.conversionRate || 1;
-        const nextKey = `${item.productId}:${unitId}:${item.warehouseId}`;
+        const isUnitChange = Boolean(selectedUnit);
+        const quantityBase =
+          input.quantity === undefined && !isUnitChange
+            ? Number(item.quantityBase ?? item.quantity * item.conversionRate)
+            : Math.max(0.0001, Math.round(quantity * conversionRate * 10000) / 10000);
+        // Selecting another sales unit keeps the count the cashier entered. The base quantity
+        // changes according to that unit's conversion rate, while the cart row stays the same.
+        const displayQuantity = quantity;
+        const nextKey = `${item.productId}:${item.warehouseId}`;
         const unitPrice =
           input.unitPrice !== undefined
             ? Math.max(0, Number(input.unitPrice))
@@ -471,10 +484,11 @@ export function usePosSession() {
           unitId,
           unitName,
           conversionRate,
-          quantity,
+          quantity: displayQuantity,
+          quantityBase,
           unitPrice,
           discount,
-          lineTotal: Math.max(0, quantity * unitPrice - discount),
+          lineTotal: Math.max(0, displayQuantity * unitPrice - discount),
         };
       });
 
@@ -646,6 +660,13 @@ export function usePosSession() {
           }
           setStatus(msg);
           toast.error(msg);
+          return;
+        }
+
+        if (message.type === "MESSAGE_ERROR") {
+          const msg = message.payload?.message || "عملیات POS ناکام شد";
+          setStatus(msg);
+          toast.error(msg);
         }
       } catch {
         // ignore invalid websocket payload
@@ -765,6 +786,24 @@ export function usePosSession() {
     const nextWarehouse = warehouses.find((item) => item.id === warehouseId) || null;
     if (!nextWarehouse) return;
 
+    if (cartItems.length > 0 && nextWarehouse.id !== warehouse?.id) {
+      toast.error("برای تغییر گدام، ابتدا فاکتور جاری را ثبت، معلق یا پاک کنید");
+      return;
+    }
+
+    if (nextWarehouse.id === warehouse?.id) return;
+
+    if (apiBaseUrl && session?.session.id) {
+      try {
+        await updatePosSessionSettings(apiBaseUrl, session.session.id, {
+          warehouseId: nextWarehouse.id,
+        });
+      } catch (error: any) {
+        toast.error(error?.message || "تغییر گدام POS ناکام شد");
+        return;
+      }
+    }
+
     localStorage.setItem("muhaseb_pos_warehouse_id", nextWarehouse.id);
     setWarehouse(nextWarehouse);
     if (apiBaseUrl) {
@@ -773,18 +812,7 @@ export function usePosSession() {
       });
     }
 
-    if (sendWsMessage({ type: "SET_ACTIVE_WAREHOUSE", warehouseId: nextWarehouse.id })) {
-      toast.success(`گدام فعال شد: ${nextWarehouse.name}`);
-      return;
-    }
-
-    if (apiBaseUrl && session?.session.id) {
-      await updatePosSessionSettings(apiBaseUrl, session.session.id, {
-        warehouseId: nextWarehouse.id,
-      });
-
-      toast.success(`گدام فعال شد: ${nextWarehouse.name}`);
-    }
+    toast.success(`گدام فعال شد: ${nextWarehouse.name}`);
   }
 
   async function loadProductList(
@@ -926,7 +954,7 @@ export function usePosSession() {
   }
 
   async function addProductByBarcode(barcode: string, productId?: string) {
-    if (!barcode) {
+    if (!barcode && !productId) {
       toast.error("این محصول بارکود ندارد");
       return;
     }
@@ -936,14 +964,20 @@ export function usePosSession() {
       return;
     }
 
-    setStatus(`در حال افزودن بارکود: ${barcode}`);
+    if (!warehouse?.id) {
+      toast.error("ابتدا گدام فعال را انتخاب کنید");
+      return;
+    }
 
-    pendingScanBarcodeRef.current = barcode;
+    const scanValue = barcode || productId!;
+    setStatus(`در حال افزودن بارکود: ${scanValue}`);
+
+    pendingScanBarcodeRef.current = barcode || null;
 
     if (!productId) {
       if (sendWsMessage({
         type: "SCAN_BARCODE",
-        barcode,
+        barcode: scanValue,
         warehouseId: warehouse?.id || null,
       })) {
         return;
@@ -956,7 +990,7 @@ export function usePosSession() {
       const res = await scanPosBarcode({
         baseUrl: apiBaseUrl,
         sessionId: session.session.id,
-        barcode,
+        barcode: scanValue,
         productId: productId || null,
         warehouseId: warehouse?.id || null,
       });
@@ -966,7 +1000,7 @@ export function usePosSession() {
           cart: res.data.cart,
           summary: res.data.cartSummary,
         }, {
-          highlightBarcode: barcode,
+          highlightBarcode: barcode || null,
           highlightChangedItem: true,
         });
       }
@@ -986,6 +1020,7 @@ export function usePosSession() {
 
   async function resetPosSession() {
     socketRef.current?.close();
+    cartRevisionRef.current = 0;
     setSession(null);
     setCart(null);
     setSummary(null);
@@ -1065,6 +1100,7 @@ export function usePosSession() {
       setPaymentMethodState(["CASH", "CARD", "SPLIT"].includes(savedPaymentMethod) ? savedPaymentMethod : "CASH");
 
       const sessionRes = await createPosSession(baseUrl);
+      cartRevisionRef.current = 0;
       setSession(sessionRes.data);
 
       if (selectedWarehouse?.id) {
@@ -1169,15 +1205,46 @@ export function usePosSession() {
       discount?: number;
     }
   ) {
-    if (!input.unitId) {
-      applyOptimisticCartItemUpdate(key, input);
-    }
+    const itemBeforeUpdate = cartItems.find((item) => item.key === key);
+    const nextConversionRate =
+      input.unitId && itemBeforeUpdate?.unitId !== input.unitId
+        ? Number(
+            itemBeforeUpdate?.unitOptions?.find((unit) => unit.unitId === input.unitId)
+              ?.conversionRate || itemBeforeUpdate?.conversionRate || 1,
+          )
+        : Number(itemBeforeUpdate?.conversionRate || 1);
+    const nextBaseQuantity =
+      input.quantity === undefined
+        ? Number(itemBeforeUpdate?.quantityBase ?? 0)
+        : Number(input.quantity || 0) * nextConversionRate;
+    const crossesSnapshot =
+      input.quantity !== undefined &&
+      nextBaseQuantity > Number(itemBeforeUpdate?.availableBaseQuantity ?? itemBeforeUpdate?.totalStock ?? 0);
 
-    if (sendWsMessage({ type: "UPDATE_CART_ITEM", key, ...input })) return;
+    applyOptimisticCartItemUpdate(key, input);
+
+    if (sendWsMessage({ type: "UPDATE_CART_ITEM", key, ...input })) {
+      if (crossesSnapshot) void revalidateCartStock();
+      return;
+    }
     if (!apiBaseUrl || !session?.session.id) return;
 
     const res = await updateCartItem(apiBaseUrl, session.session.id, key, input);
     applyServerCart(res.data);
+    if (crossesSnapshot) void revalidateCartStock();
+  }
+
+  async function revalidateCartStock() {
+    if (cartRevalidationInFlightRef.current || !apiBaseUrl || !session?.session.id) return;
+    cartRevalidationInFlightRef.current = true;
+    try {
+      const res = await revalidatePosCart(apiBaseUrl, session.session.id);
+      applyServerCart(res.data);
+    } catch (error: any) {
+      toast.error(error?.message || "تازه‌سازی موجودی سبد ناکام شد");
+    } finally {
+      cartRevalidationInFlightRef.current = false;
+    }
   }
 
   async function removeItem(key: string) {
@@ -1383,6 +1450,38 @@ export function usePosSession() {
       return;
     }
 
+    if (!apiBaseUrl || !session?.session.id) {
+      toast.error("جلسه فروش آماده نیست");
+      return;
+    }
+
+    // The cart snapshot is only a UI hint. Recheck all rows in one server request
+    // immediately before the sale; the transaction in /api/sales remains authoritative.
+    submittingSaleRef.current = true;
+    setIsSubmittingSale(true);
+    let cartRevalidationPassed = false;
+    try {
+      const revalidated = await revalidatePosCart(apiBaseUrl, session.session.id);
+      applyServerCart(revalidated.data);
+      if (revalidated.data.issues.length > 0) {
+        const firstIssue = revalidated.data.issues[0]!;
+        toast.error(
+          `موجودی «${firstIssue.productName}» کافی نیست: ${firstIssue.availableBaseQuantity} از ${firstIssue.requiredBaseQuantity} واحد پایه`,
+        );
+        return;
+      }
+      cartRevalidationPassed = true;
+    } catch (error: any) {
+      toast.error(error?.message || "بررسی موجودی پیش از فروش ناکام شد");
+      return;
+    } finally {
+      // Keep F9/F10 locked from revalidation through the final sale request.
+      if (!cartRevalidationPassed) {
+        submittingSaleRef.current = false;
+        setIsSubmittingSale(false);
+      }
+    }
+
     const requestedPaidAmount =
       paymentMethod === "SPLIT"
         ? Number(splitCashAmount || 0) + Number(splitCardAmount || 0)
@@ -1501,8 +1600,6 @@ export function usePosSession() {
       return;
     }
 
-    submittingSaleRef.current = true;
-    setIsSubmittingSale(true);
     let saleCommitted = false;
 
     try {

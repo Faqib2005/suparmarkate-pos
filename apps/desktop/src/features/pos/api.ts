@@ -61,6 +61,25 @@ export async function getPosCart(baseUrl: string, sessionId: string) {
   }>(`${baseUrl}/api/pos/sessions/${sessionId}/cart`);
 }
 
+export async function revalidatePosCart(baseUrl: string, sessionId: string) {
+  return fetchJson<{
+    data: CartPayload & {
+      issues: Array<{
+        key: string;
+        productId: string;
+        productName: string;
+        warehouseId: string;
+        requiredBaseQuantity: number;
+        availableBaseQuantity: number;
+        maxSellableQuantity: number;
+        lotCount: number;
+      }>;
+    };
+  }>(`${baseUrl}/api/pos/sessions/${sessionId}/cart/revalidate`, {
+    method: "POST",
+  });
+}
+
 export async function clearPosCart(baseUrl: string, sessionId: string) {
   return fetchJson<{
     data: CartPayload;

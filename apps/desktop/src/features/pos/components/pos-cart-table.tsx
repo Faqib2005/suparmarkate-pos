@@ -52,9 +52,14 @@ function getDaysUntilExpiry(expiryDate?: string | null) {
 }
 
 function StockBadge({ item }: { item: ServerCartItem }) {
-  const totalStock = Number(item.totalStock || 0);
-  const requiredBaseQuantity =
-    Number(item.quantity || 0) * Number(item.conversionRate || 1);
+  const totalStock = Number(item.availableBaseQuantity ?? item.totalStock ?? 0);
+  const requiredBaseQuantity = Number(
+    item.quantityBase ?? Number(item.quantity || 0) * Number(item.conversionRate || 1),
+  );
+  const maxInSelectedUnit =
+    Math.round((totalStock / Math.max(Number(item.conversionRate || 1), 0.0001)) * 10000) /
+    10000;
+  const lotSuffix = Number(item.lotCount || 0) > 1 ? ` · ${item.lotCount} لات` : "";
 
   if (totalStock <= 0) {
     return <Badge variant="destructive">بدون موجودی</Badge>;
@@ -65,10 +70,10 @@ function StockBadge({ item }: { item: ServerCartItem }) {
   }
 
   if (totalStock <= requiredBaseQuantity + 2) {
-    return <Badge variant="secondary">موجودی کم: {totalStock}</Badge>;
+    return <Badge variant="secondary">موجودی کم: {totalStock} پایه ({maxInSelectedUnit} {item.unitName}){lotSuffix}</Badge>;
   }
 
-  return <Badge variant="outline">موجودی: {totalStock}</Badge>;
+  return <Badge variant="outline">موجودی: {totalStock} پایه ({maxInSelectedUnit} {item.unitName}){lotSuffix}</Badge>;
 }
 
 function ExpiryBadge({ expiryDate }: { expiryDate?: string | null }) {
@@ -108,8 +113,8 @@ export function PosCartTable({
 }: PosCartTableProps) {
   const hasStockIssue = items.some(
     (item) =>
-      Number(item.quantity || 0) * Number(item.conversionRate || 1) >
-      Number(item.totalStock || 0),
+      Number(item.quantityBase ?? Number(item.quantity || 0) * Number(item.conversionRate || 1)) >
+      Number(item.availableBaseQuantity ?? item.totalStock ?? 0),
   );
 
   return (
@@ -175,8 +180,8 @@ export function PosCartTable({
               <TableBody>
                 {items.map((item) => {
                   const stockIssue =
-                    Number(item.quantity || 0) * Number(item.conversionRate || 1) >
-                    Number(item.totalStock || 0);
+                    Number(item.quantityBase ?? Number(item.quantity || 0) * Number(item.conversionRate || 1)) >
+                    Number(item.availableBaseQuantity ?? item.totalStock ?? 0);
 
                   return (
                     <TableRow
@@ -201,7 +206,7 @@ export function PosCartTable({
 
                           <div className="flex flex-wrap gap-1">
                             <StockBadge item={item} />
-                            <ExpiryBadge expiryDate={item.expiryDate} />
+                            <ExpiryBadge expiryDate={item.nextExpiryDate ?? item.expiryDate} />
                           </div>
                         </div>
                       </TableCell>

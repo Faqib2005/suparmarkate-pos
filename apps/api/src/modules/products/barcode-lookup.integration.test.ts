@@ -5,6 +5,9 @@ import {
   createPosSession,
   getPosCart,
   handlePosBarcodeScan,
+  revalidatePosCart,
+  updatePosCartItem,
+  updatePosSessionSettings,
 } from "../../lib/pos-realtime";
 import { prisma } from "../../lib/prisma";
 import { productsRoute } from "./routes";
@@ -19,6 +22,7 @@ let unitId = "";
 let warehouseId = "";
 let currencyId = "";
 const productIds: string[] = [];
+const testUnitIds: string[] = [];
 
 function toPersianDigits(value: string) {
   return value.replace(/\d/g, (digit) => "۰۱۲۳۴۵۶۷۸۹"[Number(digit)]!);
@@ -48,10 +52,172 @@ afterAll(async () => {
   await prisma.stockBalance.deleteMany({ where: { productId: { in: productIds } } });
   await prisma.stockLot.deleteMany({ where: { productId: { in: productIds } } });
   await prisma.product.deleteMany({ where: { id: { in: productIds } } });
+  await prisma.unit.deleteMany({ where: { id: { in: testUnitIds } } });
   await prisma.$disconnect();
 });
 
 describe("normalized product barcode lookup", () => {
+  it("keeps one POS row per product and warehouse while aggregating every positive lot", async () => {
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const barcode = `POS-CART-${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    const cartonUnit = await prisma.unit.create({
+      data: {
+        name: `POS carton ${suffix}`,
+        shortName: "کارتن",
+      },
+    });
+    testUnitIds.push(cartonUnit.id);
+    const product = await prisma.product.create({
+      data: {
+        name: `POS multi-lot ${suffix}`,
+        sku: `POS-MULTI-LOT-${suffix}`,
+        barcode,
+        barcodeNormalized: barcode,
+        baseUnitId: unitId,
+        defaultWarehouseId: warehouseId,
+        units: {
+          create: [
+            {
+              unitId,
+              conversionRate: 1,
+              purchasePrice: 10,
+              salePrice: 20,
+              isDefaultPurchase: true,
+              isDefaultSale: true,
+            },
+            {
+              unitId: cartonUnit.id,
+              conversionRate: 10,
+              purchasePrice: 100,
+              salePrice: 200,
+            },
+          ],
+        },
+      },
+    });
+    productIds.push(product.id);
+
+    await Promise.all(
+      [5, 10, 20].map((quantity, index) =>
+        prisma.stockLot.create({
+          data: {
+            productId: product.id,
+            warehouseId,
+            initialQuantity: quantity,
+            remainingQuantity: quantity,
+            unitCost: 10 + index,
+            currencyId,
+            exchangeRate: 1,
+            baseUnitCost: 10 + index,
+            sourceType: "POS_CART_MULTI_LOT_TEST",
+            createdAt: new Date(Date.now() - (3 - index) * 1_000),
+          },
+        }),
+      ),
+    );
+
+    const session = createPosSession("POS multi-lot cart integration test");
+    updatePosSessionSettings({ sessionId: session.id, warehouseId });
+
+    expect((await handlePosBarcodeScan({ sessionId: session.id, barcode, source: "http" })).ok).toBe(true);
+    expect((await handlePosBarcodeScan({ sessionId: session.id, barcode, source: "http" })).ok).toBe(true);
+
+    let cart = getPosCart(session.id);
+    expect(cart.items).toHaveLength(1);
+    expect(cart.items[0]).toMatchObject({
+      key: `${product.id}:${warehouseId}`,
+      quantity: 2,
+      quantityBase: 2,
+      availableBaseQuantity: 35,
+      lotCount: 3,
+    });
+
+    updatePosCartItem({
+      sessionId: session.id,
+      key: cart.items[0]!.key,
+      unitId: cartonUnit.id,
+    });
+    cart = getPosCart(session.id);
+    expect(cart.items).toHaveLength(1);
+    expect(cart.items[0]).toMatchObject({
+      key: `${product.id}:${warehouseId}`,
+      unitId: cartonUnit.id,
+      quantity: 2,
+      quantityBase: 20,
+      unitPrice: 200,
+    });
+
+    expect((await handlePosBarcodeScan({ sessionId: session.id, barcode, source: "http" })).ok).toBe(true);
+    cart = getPosCart(session.id);
+    expect(cart.items).toHaveLength(1);
+    expect(cart.items[0]).toMatchObject({
+      unitId: cartonUnit.id,
+      quantity: 3,
+      quantityBase: 30,
+    });
+
+    updatePosCartItem({ sessionId: session.id, key: cart.items[0]!.key, unitId });
+    cart = getPosCart(session.id);
+    expect(cart.items[0]).toMatchObject({ unitId, quantity: 3, quantityBase: 3 });
+
+    updatePosCartItem({ sessionId: session.id, key: cart.items[0]!.key, quantity: 18 });
+    const revalidated = await revalidatePosCart(session.id);
+    cart = getPosCart(session.id);
+    expect(revalidated.issues).toEqual([]);
+    expect(cart.items).toHaveLength(1);
+    expect(cart.items[0]).toMatchObject({ quantity: 18, quantityBase: 18, availableBaseQuantity: 35 });
+    expect(cart.revision).toBeGreaterThan(0);
+
+    expect(() =>
+      updatePosSessionSettings({ sessionId: session.id, warehouseId: null }),
+    ).toThrow("تغییر گدام");
+    clearPosCart(session.id);
+
+    const productWithoutBarcode = await prisma.product.create({
+      data: {
+        name: `POS direct product ${suffix}`,
+        sku: `POS-DIRECT-${suffix}`,
+        baseUnitId: unitId,
+        defaultWarehouseId: warehouseId,
+        units: {
+          create: {
+            unitId,
+            conversionRate: 1,
+            purchasePrice: 10,
+            salePrice: 20,
+            isDefaultPurchase: true,
+            isDefaultSale: true,
+          },
+        },
+      },
+    });
+    productIds.push(productWithoutBarcode.id);
+    await prisma.stockLot.create({
+      data: {
+        productId: productWithoutBarcode.id,
+        warehouseId,
+        initialQuantity: 1,
+        remainingQuantity: 1,
+        unitCost: 10,
+        currencyId,
+        exchangeRate: 1,
+        baseUnitCost: 10,
+        sourceType: "POS_CARD_WITHOUT_BARCODE_TEST",
+      },
+    });
+
+    const directAdd = await handlePosBarcodeScan({
+      sessionId: session.id,
+      barcode: "",
+      productId: productWithoutBarcode.id,
+      warehouseId,
+      source: "http",
+    });
+    expect(directAdd).toMatchObject({ ok: true, data: { product: { id: productWithoutBarcode.id } } });
+    expect(getPosCart(session.id).items).toHaveLength(1);
+    clearPosCart(session.id);
+  });
+
   it("finds legacy variants, reports ambiguity, and only adds an explicitly selected product", async () => {
     const digits = `97${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 10)}`;
     const firstRawBarcode = `${digits.slice(0, 6)}-${digits.slice(6)}`;

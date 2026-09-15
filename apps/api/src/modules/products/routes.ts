@@ -63,6 +63,16 @@ const mergeProductSchema = z.object({
   confirm: z.literal(true),
 });
 
+function defaultSaleUnitValidationMessage(
+  units: Array<{ unitId: string; isDefaultSale?: boolean }>,
+) {
+  const defaultSaleUnits = units.filter((unit) => unit.isDefaultSale);
+  if (defaultSaleUnits.length > 1) {
+    return "برای هر محصول فقط یک واحد فروش پیش‌فرض قابل ثبت است";
+  }
+  return null;
+}
+
 const imageMimeTypes = new Set([
   "image/jpeg",
   "image/png",
@@ -836,6 +846,74 @@ productsRoute.get("/barcode-duplicates", async (c) => {
   return c.json({ data: rows });
 });
 
+productsRoute.get("/pos-data-quality", async (c) => {
+  if (!isAdminUser(c)) {
+    return c.json({ message: "این گزارش فقط برای مدیر سیستم قابل استفاده است" }, 403);
+  }
+
+  const limit = Math.min(Math.max(Number(c.req.query("limit") || 200), 1), 1000);
+  const products = await prisma.product.findMany({
+    where: { deletedAt: null, isActive: true },
+    select: {
+      id: true,
+      name: true,
+      barcode: true,
+      baseUnitId: true,
+      units: {
+        select: {
+          unitId: true,
+          salePrice: true,
+          isDefaultSale: true,
+          unit: { select: { name: true, shortName: true } },
+        },
+      },
+    },
+    orderBy: { name: "asc" },
+  });
+
+  const saleUnitIssues = products.flatMap((product) => {
+    const defaultUnits = product.units.filter((unit) => unit.isDefaultSale);
+    const baseUnit = product.units.find((unit) => unit.unitId === product.baseUnitId) || null;
+    const defaultUnit = defaultUnits.length === 1 ? defaultUnits[0] : null;
+    const defaultPriceIsValid = Number(defaultUnit?.salePrice || 0) > 0;
+    const basePriceIsValid = Number(baseUnit?.salePrice || 0) > 0;
+    const reason =
+      defaultUnits.length > 1
+        ? "چند واحد فروش پیش‌فرض دارد"
+        : defaultUnits.length === 0
+          ? "واحد فروش پیش‌فرض ندارد"
+          : !defaultPriceIsValid
+            ? "قیمت واحد فروش پیش‌فرض معتبر نیست"
+            : null;
+
+    if (!reason) return [];
+    return [{
+      id: product.id,
+      name: product.name,
+      barcode: product.barcode,
+      reason,
+      fallbackToBaseUnitIsSafe: basePriceIsValid,
+      baseUnit: baseUnit
+        ? {
+            unitId: baseUnit.unitId,
+            unitName: baseUnit.unit.shortName || baseUnit.unit.name,
+            salePrice: Number(baseUnit.salePrice || 0),
+          }
+        : null,
+      defaultSaleUnitCount: defaultUnits.length,
+    }];
+  });
+
+  return c.json({
+    data: saleUnitIssues.slice(0, limit),
+    summary: {
+      saleUnitIssues: saleUnitIssues.length,
+      returned: Math.min(saleUnitIssues.length, limit),
+      truncated: saleUnitIssues.length > limit,
+    },
+  });
+});
+
 productsRoute.get("/merge-preview", async (c) => {
   if (!isAdminUser(c)) {
     return c.json({ message: "این ابزار فقط برای مدیر سیستم قابل استفاده است" }, 403);
@@ -1059,6 +1137,10 @@ productsRoute.post("/", async (c) => {
   }
 
   const { units, ...productData } = parsed.data;
+  const unitValidationMessage = defaultSaleUnitValidationMessage(units);
+  if (unitValidationMessage) {
+    return c.json({ message: unitValidationMessage }, 400);
+  }
   const barcode = await resolveProductBarcode(productData.barcode);
   const barcodeNormalized = normalizeBarcodeText(barcode);
   await ensureBarcodeIsAvailable(barcode);
@@ -1122,6 +1204,12 @@ productsRoute.patch("/:id", async (c) => {
   }
 
   const { units, ...productData } = parsed.data;
+  if (units) {
+    const unitValidationMessage = defaultSaleUnitValidationMessage(units);
+    if (unitValidationMessage) {
+      return c.json({ message: unitValidationMessage }, 400);
+    }
+  }
   const nextBarcode = Object.prototype.hasOwnProperty.call(productData, "barcode")
     ? await resolveProductBarcode(productData.barcode)
     : undefined;

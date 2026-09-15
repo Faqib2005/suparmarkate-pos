@@ -140,9 +140,14 @@ function quickAmounts(payableTotal: number) {
 }
 
 function stockTone(item: ServerCartItem) {
-  const totalStock = Number(item.totalStock || 0);
-  const requiredBaseQuantity =
-    Number(item.quantity || 0) * Number(item.conversionRate || 1);
+  const totalStock = Number(item.availableBaseQuantity ?? item.totalStock ?? 0);
+  const requiredBaseQuantity = Number(
+    item.quantityBase ?? Number(item.quantity || 0) * Number(item.conversionRate || 1),
+  );
+  const maxInSelectedUnit =
+    Math.round((totalStock / Math.max(Number(item.conversionRate || 1), 0.0001)) * 10000) /
+    10000;
+  const lotSuffix = Number(item.lotCount || 0) > 1 ? ` · ${item.lotCount} لات` : "";
 
   if (totalStock <= 0 || requiredBaseQuantity > totalStock) {
     return {
@@ -153,13 +158,13 @@ function stockTone(item: ServerCartItem) {
 
   if (totalStock <= requiredBaseQuantity + 2) {
     return {
-      label: `کم موجود: ${totalStock}`,
+      label: `کم موجود: ${totalStock} پایه (${maxInSelectedUnit} ${item.unitName})${lotSuffix}`,
       className: "border-primary/30 bg-primary/10 text-primary",
     };
   }
 
   return {
-    label: `موجودی: ${totalStock}`,
+    label: `موجودی: ${totalStock} پایه (${maxInSelectedUnit} ${item.unitName})${lotSuffix}`,
     className: "border-border bg-secondary text-secondary-foreground",
   };
 }
@@ -233,8 +238,8 @@ export function PosCurrentInvoiceCard({
   ).padStart(4, "0")}`;
   const hasStockIssue = items.some(
     (item) =>
-      Number(item.quantity || 0) * Number(item.conversionRate || 1) >
-      Number(item.totalStock || 0),
+      Number(item.quantityBase ?? Number(item.quantity || 0) * Number(item.conversionRate || 1)) >
+      Number(item.availableBaseQuantity ?? item.totalStock ?? 0),
   );
 
   return (
@@ -361,9 +366,11 @@ export function PosCurrentInvoiceCard({
                       <TableRow
                         key={item.key}
                         className={cn(
-                          Number(item.quantity || 0) *
-                            Number(item.conversionRate || 1) >
-                            Number(item.totalStock || 0) && "bg-destructive/5",
+                          Number(
+                            item.quantityBase ??
+                              Number(item.quantity || 0) * Number(item.conversionRate || 1),
+                          ) >
+                            Number(item.availableBaseQuantity ?? item.totalStock ?? 0) && "bg-destructive/5",
                           item.key === highlightedItemKey &&
                             "bg-primary/15 ring-1 ring-inset ring-primary/30",
                         )}

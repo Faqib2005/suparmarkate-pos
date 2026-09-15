@@ -27,6 +27,8 @@ type UploadManifest = {
   files: UploadManifestEntry[];
 };
 
+const RESTORE_WORK_DIRECTORY_PREFIX = ".muhaseb-restore-";
+
 export type UploadSnapshotValidation = {
   present: boolean;
   valid: boolean;
@@ -97,6 +99,9 @@ async function walk(directory: string, root = directory): Promise<UploadManifest
   for (const entry of entries) {
     const absolute = path.join(directory, entry.name);
     if (entry.isDirectory()) {
+      if (directory === root && entry.name.startsWith(RESTORE_WORK_DIRECTORY_PREFIX)) {
+        continue;
+      }
       rows.push(...(await walk(absolute, root)));
     } else if (entry.isFile() && entry.name !== ".manifest.json") {
       const fileStat = await stat(absolute);
@@ -182,6 +187,62 @@ async function swapDirectory(staging: string, destination: string) {
   if (movedPrevious) {
     await rm(previous, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+async function replaceMountedDirectoryContents(staging: string, destination: string) {
+  const rollbackName = [
+    RESTORE_WORK_DIRECTORY_PREFIX,
+    "previous-",
+    randomUUID()
+  ].join("");
+  const rollback = path.join(destination, rollbackName);
+  const stagingName = path.basename(staging);
+  const installedNames: string[] = [];
+  let committed = false;
+  let rollbackCompleted = false;
+
+  await mkdir(destination, { recursive: true });
+  await mkdir(rollback, { recursive: true });
+
+  try {
+    const currentNames = (await readdir(destination)).filter(
+      (name) =>
+        name !== stagingName &&
+        name !== rollbackName &&
+        !name.startsWith(RESTORE_WORK_DIRECTORY_PREFIX)
+    );
+    for (const name of currentNames) {
+      await rename(path.join(destination, name), path.join(rollback, name));
+    }
+
+    for (const name of await readdir(staging)) {
+      await rename(path.join(staging, name), path.join(destination, name));
+      installedNames.push(name);
+    }
+    committed = true;
+  } catch (restoreError) {
+    try {
+      for (const name of installedNames.reverse()) {
+        await rm(path.join(destination, name), { recursive: true, force: true });
+      }
+      for (const name of await readdir(rollback)) {
+        await rename(path.join(rollback, name), path.join(destination, name));
+      }
+      rollbackCompleted = true;
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [restoreError, rollbackError],
+        "Upload restore failed and the previous upload contents could not be fully restored"
+      );
+    }
+    throw restoreError;
+  } finally {
+    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    if (committed || rollbackCompleted) {
+      await rm(rollback, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
 }
 
 async function validateUploadDirectory(directory: string): Promise<UploadSnapshotValidation> {
@@ -337,7 +398,10 @@ export async function restoreUploadedFiles(
   }
 
   const destination = getUploadDir();
-  const staging = `${destination}.staging-${randomUUID()}`;
+  const staging = path.join(
+    destination,
+    [RESTORE_WORK_DIRECTORY_PREFIX, "staging-", randomUUID()].join("")
+  );
   await rm(staging, { recursive: true, force: true });
   await mkdir(staging, { recursive: true });
 
@@ -366,7 +430,7 @@ export async function restoreUploadedFiles(
       throw new Error("Staged upload file count does not match the backup manifest");
     }
 
-    await swapDirectory(staging, destination);
+    await replaceMountedDirectoryContents(staging, destination);
     return { restored: true, preserved: false, validation: sourceValidation };
   } catch (error) {
     await rm(staging, { recursive: true, force: true }).catch(() => undefined);

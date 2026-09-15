@@ -4,7 +4,11 @@ import { prisma } from "../../lib/prisma";
 import { zodError } from "../../lib/api";
 import { getAuthUser, writeAudit } from "../../lib/auth";
 import { normalizeBarcodeText } from "../../lib/barcode";
-import { resolveCurrencySnapshot, snapshotBaseFields, toBaseAmount } from "../../lib/currency-rates";
+import {
+  resolveCurrencySnapshot,
+  snapshotBaseFields,
+  toBaseAmount,
+} from "../../lib/currency-rates";
 import { createPostedJournal, createReversalJournal, treasuryAccountCode } from "../../lib/journal";
 import { getRequestPosDevice } from "../../lib/pos-device";
 import { createPaginationMeta, getPagePagination } from "../../lib/pagination";
@@ -26,13 +30,10 @@ import {
   PartyType,
   SalePaymentStatus,
   SaleStatus,
-  StockMovementType
+  StockMovementType,
 } from "../../generated/prisma/enums";
 import { acquireTransactionLock } from "../../lib/db-lock";
-import {
-  InventoryMutationService,
-  requestOperationId
-} from "../../lib/inventory-mutation";
+import { InventoryMutationService, requestOperationId } from "../../lib/inventory-mutation";
 import { inventoryOperationEvidence } from "../../lib/request-evidence";
 import { roundStockQuantity, stockDecimal } from "../../lib/stock-quantity";
 
@@ -43,7 +44,7 @@ const paymentAccountTypeSchema = z.enum(["CASH", "BANK"]);
 const paymentLineSchema = z.object({
   paymentAccountType: paymentAccountTypeSchema,
   paymentAccountId: z.string().trim().min(1),
-  amount: z.coerce.number().positive()
+  amount: z.coerce.number().positive(),
 });
 
 const saleItemSchema = z.object({
@@ -53,7 +54,7 @@ const saleItemSchema = z.object({
   quantity: z.coerce.number().positive(),
   unitPrice: z.coerce.number().nonnegative(),
   discount: z.coerce.number().nonnegative().default(0),
-  lotId: z.string().trim().optional().nullable()
+  lotId: z.string().trim().optional().nullable(),
 });
 
 const createSaleSchema = z.object({
@@ -68,7 +69,7 @@ const createSaleSchema = z.object({
   paymentAccountId: z.string().trim().optional().nullable(),
   paymentLines: z.array(paymentLineSchema).optional().default([]),
   note: z.string().trim().max(500).optional().nullable(),
-  items: z.array(saleItemSchema).min(1)
+  items: z.array(saleItemSchema).min(1),
 });
 
 const saleResponseInclude = {
@@ -81,21 +82,18 @@ const saleResponseInclude = {
       product: true,
       warehouse: true,
       unit: true,
-      lot: true
-    }
-  }
+      lot: true,
+    },
+  },
 } as const;
 
 class SaleRequestOwnershipError extends Error {}
 class SaleIdempotentReplayError extends Error {}
 
-async function loadIdempotentSaleResult(
-  clientRequestId: string,
-  requestingUserId: string | null
-) {
+async function loadIdempotentSaleResult(clientRequestId: string, requestingUserId: string | null) {
   const sale = await prisma.sale.findUnique({
     where: { clientRequestId },
-    include: saleResponseInclude
+    include: saleResponseInclude,
   });
 
   if (!sale) return null;
@@ -104,39 +102,38 @@ async function loadIdempotentSaleResult(
     throw new SaleRequestOwnershipError("This sale request ID belongs to another user");
   }
 
-  const [moneyTransactions, customerTransaction, journalEntry, cogsJournal] =
-    await Promise.all([
-      prisma.moneyTransaction.findMany({
-        where: {
-          referenceType: "SALE",
-          referenceId: sale.id,
-          direction: MoneyDirection.IN
-        }
-      }),
-      prisma.partyTransaction.findFirst({
-        where: {
-          referenceType: "SALE",
-          referenceId: sale.id,
-          type: PartyTransactionType.SALE_CREDIT
-        }
-      }),
-      prisma.journalEntry.findFirst({
-        where: { sourceType: "POS_SALE", sourceId: sale.id },
-        include: {
-          lines: {
-            include: { account: true, party: true }
-          }
-        }
-      }),
-      prisma.journalEntry.findFirst({
-        where: { sourceType: "POS_SALE_COGS", sourceId: sale.id },
-        include: {
-          lines: {
-            include: { account: true, party: true }
-          }
-        }
-      })
-    ]);
+  const [moneyTransactions, customerTransaction, journalEntry, cogsJournal] = await Promise.all([
+    prisma.moneyTransaction.findMany({
+      where: {
+        referenceType: "SALE",
+        referenceId: sale.id,
+        direction: MoneyDirection.IN,
+      },
+    }),
+    prisma.partyTransaction.findFirst({
+      where: {
+        referenceType: "SALE",
+        referenceId: sale.id,
+        type: PartyTransactionType.SALE_CREDIT,
+      },
+    }),
+    prisma.journalEntry.findFirst({
+      where: { sourceType: "POS_SALE", sourceId: sale.id },
+      include: {
+        lines: {
+          include: { account: true, party: true },
+        },
+      },
+    }),
+    prisma.journalEntry.findFirst({
+      where: { sourceType: "POS_SALE_COGS", sourceId: sale.id },
+      include: {
+        lines: {
+          include: { account: true, party: true },
+        },
+      },
+    }),
+  ]);
 
   return {
     sale: {
@@ -148,7 +145,7 @@ async function loadIdempotentSaleResult(
     customerTransaction,
     journalEntry,
     cogsJournal,
-    idempotentReplay: true
+    idempotentReplay: true,
   };
 }
 
@@ -156,15 +153,15 @@ const salePaymentSchema = z.object({
   amount: z.coerce.number().positive(),
   paymentAccountType: paymentAccountTypeSchema,
   paymentAccountId: z.string().trim().min(1),
-  note: z.string().trim().max(500).optional().nullable()
+  note: z.string().trim().max(500).optional().nullable(),
 });
 
 const cancelSaleSchema = z.object({
-  reason: z.string().trim().max(500).optional().nullable()
+  reason: z.string().trim().max(500).optional().nullable(),
 });
 
 const repairSaleCogsSchema = z.object({
-  confirm: z.literal(true)
+  confirm: z.literal(true),
 });
 
 function parseDate(value: string | null | undefined) {
@@ -195,58 +192,75 @@ salesRoute.get("/", async (c) => {
             { customer: { name: { contains: search, mode: "insensitive" as const } } },
             { customer: { phone: { contains: search, mode: "insensitive" as const } } },
             { customer: { code: { contains: search, mode: "insensitive" as const } } },
-            { items: { some: { product: { name: { contains: search, mode: "insensitive" as const } } } } },
-            { items: { some: { product: { barcode: { contains: search, mode: "insensitive" as const } } } } },
-            { items: { some: { product: { barcodeNormalized: { contains: normalizeBarcodeText(search), mode: "insensitive" as const } } } } },
+            {
+              items: {
+                some: { product: { name: { contains: search, mode: "insensitive" as const } } },
+              },
+            },
+            {
+              items: {
+                some: { product: { barcode: { contains: search, mode: "insensitive" as const } } },
+              },
+            },
+            {
+              items: {
+                some: {
+                  product: {
+                    barcodeNormalized: {
+                      contains: normalizeBarcodeText(search),
+                      mode: "insensitive" as const,
+                    },
+                  },
+                },
+              },
+            },
           ],
         }
-      : {})
+      : {}),
   };
 
   const [items, total, summary] = await Promise.all([
     prisma.sale.findMany({
-    where,
-    include: {
-      customer: true,
-      currency: true,
-      items: {
-        include: {
-          product: true,
-          warehouse: true,
-          unit: true,
-          lot: true,
-        }
-      }
-    },
-    orderBy: {
-      createdAt: "desc"
-    },
-    skip: pagination.skip,
-    take: pagination.limit
-  }),
+      where,
+      include: {
+        customer: true,
+        currency: true,
+        items: {
+          include: {
+            product: true,
+            warehouse: true,
+            unit: true,
+            lot: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      skip: pagination.skip,
+      take: pagination.limit,
+    }),
     prisma.sale.count({ where }),
     prisma.sale.aggregate({
       where: { ...where, status: { not: SaleStatus.CANCELLED } },
       _count: true,
-      _sum: { baseTotal: true, basePaidAmount: true, baseRemainingAmount: true }
-    })
+      _sum: { baseTotal: true, basePaidAmount: true, baseRemainingAmount: true },
+    }),
   ]);
 
   const cogsEntries = items.length
     ? await prisma.journalEntry.findMany({
         where: {
           sourceType: "POS_SALE_COGS",
-          sourceId: { in: items.map((item) => item.id) }
+          sourceId: { in: items.map((item) => item.id) },
         },
         select: {
           sourceId: true,
-          _count: { select: { lines: true } }
-        }
+          _count: { select: { lines: true } },
+        },
       })
     : [];
-  const cogsBySaleId = new Map(
-    cogsEntries.map((entry) => [entry.sourceId, entry._count.lines])
-  );
+  const cogsBySaleId = new Map(cogsEntries.map((entry) => [entry.sourceId, entry._count.lines]));
 
   return c.json({
     data: items.map((item) => ({
@@ -256,15 +270,15 @@ salesRoute.get("/", async (c) => {
         ? "MISSING"
         : Number(cogsBySaleId.get(item.id) || 0) === 0
           ? "ZERO_COST"
-          : "POSTED"
+          : "POSTED",
     })),
     pagination: createPaginationMeta({ ...pagination, total }),
     summary: {
       count: summary._count,
       total: Number(summary._sum.baseTotal || 0),
       paid: Number(summary._sum.basePaidAmount || 0),
-      remaining: Number(summary._sum.baseRemainingAmount || 0)
-    }
+      remaining: Number(summary._sum.baseRemainingAmount || 0),
+    },
   });
 });
 
@@ -276,11 +290,7 @@ salesRoute.get("/cogs-quality", async (c) => {
   const toDate = toValue ? parseDate(toValue) : null;
   const toExclusive = toValue ? parseKabulDateInput(toValue, true) : null;
 
-  if (
-    fromDate === "INVALID_DATE" ||
-    toDate === "INVALID_DATE" ||
-    toExclusive === "INVALID_DATE"
-  ) {
+  if (fromDate === "INVALID_DATE" || toDate === "INVALID_DATE" || toExclusive === "INVALID_DATE") {
     return c.json({ message: "Invalid COGS quality date range" }, 400);
   }
 
@@ -291,7 +301,7 @@ salesRoute.get("/cogs-quality", async (c) => {
       FROM "JournalEntry" j
       WHERE j."sourceType" = 'POS_SALE_COGS'
         AND j."sourceId" = s."id"
-    )`
+    )`,
   ];
 
   if (fromDate instanceof Date) {
@@ -311,17 +321,19 @@ salesRoute.get("/cogs-quality", async (c) => {
       FROM "Sale" s
       WHERE ${whereSql}
     `),
-    prisma.$queryRaw<Array<{
-      id: string;
-      invoiceNo: string | null;
-      saleDate: Date;
-      createdAt: Date;
-      customerName: string | null;
-      currencyCode: string;
-      total: unknown;
-      baseTotal: unknown;
-      cogsTotal: unknown;
-    }>>(Prisma.sql`
+    prisma.$queryRaw<
+      Array<{
+        id: string;
+        invoiceNo: string | null;
+        saleDate: Date;
+        createdAt: Date;
+        customerName: string | null;
+        currencyCode: string;
+        total: unknown;
+        baseTotal: unknown;
+        cogsTotal: unknown;
+      }>
+    >(Prisma.sql`
       SELECT
         s."id",
         s."invoiceNo",
@@ -341,7 +353,7 @@ salesRoute.get("/cogs-quality", async (c) => {
       ORDER BY s."saleDate" DESC, s."createdAt" DESC, s."id" DESC
       LIMIT ${pagination.limit}
       OFFSET ${pagination.skip}
-    `)
+    `),
   ]);
   const total = Number(summaryRows[0]?.count || 0);
 
@@ -350,13 +362,13 @@ salesRoute.get("/cogs-quality", async (c) => {
       ...row,
       total: Number(row.total || 0),
       baseTotal: Number(row.baseTotal || 0),
-      cogsTotal: Number(row.cogsTotal || 0)
+      cogsTotal: Number(row.cogsTotal || 0),
     })),
     pagination: createPaginationMeta({ ...pagination, total }),
     summary: {
       missingCount: total,
-      baseSalesTotal: Number(summaryRows[0]?.baseTotal || 0)
-    }
+      baseSalesTotal: Number(summaryRows[0]?.baseTotal || 0),
+    },
   });
 });
 
@@ -418,18 +430,14 @@ salesRoute.get("/scan/:barcode", async (c) => {
     where: {
       productId: product.id,
       remainingQuantity: {
-        gt: 0
+        gt: 0,
       },
-      ...(warehouseId ? { warehouseId } : {})
+      ...(warehouseId ? { warehouseId } : {}),
     },
     include: {
-      warehouse: true
+      warehouse: true,
     },
-    orderBy: [
-      { expiryDate: "asc" },
-      { createdAt: "asc" },
-      { id: "asc" }
-    ]
+    orderBy: [{ expiryDate: "asc" }, { createdAt: "asc" }, { id: "asc" }],
   });
 
   const totalStock = lots.reduce((sum, lot) => sum + Number(lot.remainingQuantity), 0);
@@ -454,8 +462,8 @@ salesRoute.get("/scan/:barcode", async (c) => {
     data: {
       product,
       totalStock,
-      lots
-    }
+      lots,
+    },
   });
 });
 
@@ -478,48 +486,37 @@ salesRoute.get("/:id", async (c) => {
               saleReturn: true,
             },
           },
-        }
-      }
-    }
+        },
+      },
+    },
   });
 
   if (!item) {
     return c.json({ message: "Sale not found" }, 404);
   }
 
-  const pricedItems = decorateSaleItemsWithPricing(item.discount, item.items).map(
-    (saleItem) => {
-      const activeReturns = saleItem.returnItems.filter(
-        (returnItem) => !returnItem.saleReturn.cancelledAt,
-      );
-      const returnedQuantity = roundMoney4(
-        activeReturns.reduce(
-          (sum, returnItem) => sum + Number(returnItem.quantity || 0),
-          0,
-        ),
-      );
-      const returnedNetTotal = roundMoney4(
-        activeReturns.reduce(
-          (sum, returnItem) => sum + Number(returnItem.totalPrice || 0),
-          0,
-        ),
-      );
+  const pricedItems = decorateSaleItemsWithPricing(item.discount, item.items).map((saleItem) => {
+    const activeReturns = saleItem.returnItems.filter(
+      (returnItem) => !returnItem.saleReturn.cancelledAt,
+    );
+    const returnedQuantity = roundMoney4(
+      activeReturns.reduce((sum, returnItem) => sum + Number(returnItem.quantity || 0), 0),
+    );
+    const returnedNetTotal = roundMoney4(
+      activeReturns.reduce((sum, returnItem) => sum + Number(returnItem.totalPrice || 0), 0),
+    );
 
-      return {
-        ...saleItem,
-        returnedQuantity,
-        returnableQuantity: Math.max(
-          0,
-          roundMoney4(Number(saleItem.quantity) - returnedQuantity),
-        ),
-        returnedNetTotal,
-        returnableNetTotal: Math.max(
-          0,
-          roundMoney4(saleItem.effectiveNetTotalPrice - returnedNetTotal),
-        ),
-      };
-    },
-  );
+    return {
+      ...saleItem,
+      returnedQuantity,
+      returnableQuantity: Math.max(0, roundMoney4(Number(saleItem.quantity) - returnedQuantity)),
+      returnedNetTotal,
+      returnableNetTotal: Math.max(
+        0,
+        roundMoney4(saleItem.effectiveNetTotalPrice - returnedNetTotal),
+      ),
+    };
+  });
 
   return c.json({ data: { ...item, items: pricedItems } });
 });
@@ -539,15 +536,15 @@ salesRoute.post("/:id/repair-cogs", async (c) => {
     return c.json(
       {
         message: "Explicit confirmation is required to repair this sale COGS",
-        issues: zodError(parsed.error).issues
+        issues: zodError(parsed.error).issues,
       },
-      400
+      400,
     );
   }
 
   const sale = await prisma.sale.findUnique({
     where: { id },
-    select: { id: true, invoiceNo: true, status: true }
+    select: { id: true, invoiceNo: true, status: true },
   });
 
   if (!sale) {
@@ -563,8 +560,8 @@ salesRoute.post("/:id/repair-cogs", async (c) => {
       ensureSaleCogsJournal(tx, {
         saleId: sale.id,
         invoiceNo: sale.invoiceNo,
-        createdByUserId: authUser.id
-      })
+        createdByUserId: authUser.id,
+      }),
     );
 
   let result;
@@ -584,8 +581,8 @@ salesRoute.post("/:id/repair-cogs", async (c) => {
       metadata: {
         invoiceNo: sale.invoiceNo,
         cogsTotal: result.cogs.total,
-        zeroCost: result.zeroCost
-      }
+        zeroCost: result.zeroCost,
+      },
     });
   }
 
@@ -599,9 +596,9 @@ salesRoute.post("/:id/repair-cogs", async (c) => {
         ? "COGS journal already exists for this sale"
         : result.zeroCost
           ? "Sale was reviewed and marked as zero-cost"
-          : "Historical sale COGS repaired"
+          : "Historical sale COGS repaired",
     },
-    result.idempotentReplay ? 200 : 201
+    result.idempotentReplay ? 200 : 201,
   );
 });
 
@@ -619,8 +616,8 @@ salesRoute.post("/:id/cancel", async (c) => {
     where: { id },
     include: {
       items: true,
-      returns: true
-    }
+      returns: true,
+    },
   });
 
   if (!sale) {
@@ -632,14 +629,17 @@ salesRoute.post("/:id/cancel", async (c) => {
   }
 
   if (sale.returns.some((item) => !item.cancelledAt)) {
-    return c.json({ message: "Sale has returns. Cancel the return workflow manually instead." }, 400);
+    return c.json(
+      { message: "Sale has returns. Cancel the return workflow manually instead." },
+      400,
+    );
   }
 
   const moneyTransactions = await prisma.moneyTransaction.findMany({
     where: {
       referenceId: sale.id,
-      direction: MoneyDirection.IN
-    }
+      direction: MoneyDirection.IN,
+    },
   });
 
   const result = await prisma.$transaction(async (tx) => {
@@ -649,9 +649,9 @@ salesRoute.post("/:id/cancel", async (c) => {
       include: {
         returns: true,
         items: {
-          include: { lot: true }
-        }
-      }
+          include: { lot: true },
+        },
+      },
     });
     if (!currentSale || currentSale.status === SaleStatus.CANCELLED) {
       throw new Error("این فروش قبلاً ابطال شده است.");
@@ -664,12 +664,12 @@ salesRoute.post("/:id/cancel", async (c) => {
     await inventory.lock(
       currentSale.items.map((item) => ({
         productId: item.productId,
-        warehouseId: item.warehouseId
-      }))
+        warehouseId: item.warehouseId,
+      })),
     );
     const sourceMovement = await tx.stockMovement.findFirst({
       where: { referenceType: "SALE", referenceId: currentSale.id },
-      select: { operationId: true }
+      select: { operationId: true },
     });
 
     for (const item of currentSale.items) {
@@ -678,9 +678,9 @@ salesRoute.post("/:id/cancel", async (c) => {
           where: { id: item.lotId },
           data: {
             remainingQuantity: {
-              increment: stockDecimal(Number(item.quantityBase))
-            }
-          }
+              increment: stockDecimal(Number(item.quantityBase)),
+            },
+          },
         });
       }
 
@@ -700,8 +700,8 @@ salesRoute.post("/:id/cancel", async (c) => {
           referenceType: "SALE_CANCEL",
           referenceId: sale.id,
           note: parsed.data.reason ?? "Sale cancelled",
-          createdByUserId: authUser?.id ?? null
-        }
+          createdByUserId: authUser?.id ?? null,
+        },
       });
     }
 
@@ -710,14 +710,14 @@ salesRoute.post("/:id/cancel", async (c) => {
         where: {
           id: sourceMovement.operationId,
           status: "COMPLETED",
-          cancelledAt: null
+          cancelledAt: null,
         },
         data: {
           status: "CANCELLED",
           cancelledAt: kabulNow(),
           cancelReason: parsed.data.reason ?? null,
-          cancelledByUserId: authUser?.id ?? null
-        }
+          cancelledByUserId: authUser?.id ?? null,
+        },
       });
       if (changed.count !== 1) {
         throw new Error("این فروش هم‌زمان ابطال شده است.");
@@ -729,7 +729,7 @@ salesRoute.post("/:id/cancel", async (c) => {
 
       if (transaction.cashRegisterAccountId) {
         const account = await tx.cashRegisterAccount.findUnique({
-          where: { id: transaction.cashRegisterAccountId }
+          where: { id: transaction.cashRegisterAccountId },
         });
 
         if (!account || Number(account.balance) < amount) {
@@ -738,7 +738,7 @@ salesRoute.post("/:id/cancel", async (c) => {
 
         const updated = await tx.cashRegisterAccount.update({
           where: { id: transaction.cashRegisterAccountId },
-          data: { balance: { decrement: amount } }
+          data: { balance: { decrement: amount } },
         });
 
         await tx.moneyTransaction.create({
@@ -753,23 +753,23 @@ salesRoute.post("/:id/cancel", async (c) => {
             baseCurrencyId: transaction.baseCurrencyId,
             baseAmount: toBaseAmount(amount, {
               exchangeRate: Number(transaction.exchangeRate || 1),
-              baseCurrencyId: transaction.baseCurrencyId
+              baseCurrencyId: transaction.baseCurrencyId,
             }),
             baseBalanceAfter: toBaseAmount(Number(updated.balance), {
               exchangeRate: Number(transaction.exchangeRate || 1),
-              baseCurrencyId: transaction.baseCurrencyId
+              baseCurrencyId: transaction.baseCurrencyId,
             }),
             referenceType: "SALE_CANCEL",
             referenceId: sale.id,
             note: parsed.data.reason ?? "Sale cancellation",
-            createdByUserId: authUser?.id ?? null
-          }
+            createdByUserId: authUser?.id ?? null,
+          },
         });
       }
 
       if (transaction.bankAccountId) {
         const account = await tx.bankAccount.findUnique({
-          where: { id: transaction.bankAccountId }
+          where: { id: transaction.bankAccountId },
         });
 
         if (!account || Number(account.balance) < amount) {
@@ -778,7 +778,7 @@ salesRoute.post("/:id/cancel", async (c) => {
 
         const updated = await tx.bankAccount.update({
           where: { id: transaction.bankAccountId },
-          data: { balance: { decrement: amount } }
+          data: { balance: { decrement: amount } },
         });
 
         await tx.moneyTransaction.create({
@@ -793,25 +793,25 @@ salesRoute.post("/:id/cancel", async (c) => {
             baseCurrencyId: transaction.baseCurrencyId,
             baseAmount: toBaseAmount(amount, {
               exchangeRate: Number(transaction.exchangeRate || 1),
-              baseCurrencyId: transaction.baseCurrencyId
+              baseCurrencyId: transaction.baseCurrencyId,
             }),
             baseBalanceAfter: toBaseAmount(Number(updated.balance), {
               exchangeRate: Number(transaction.exchangeRate || 1),
-              baseCurrencyId: transaction.baseCurrencyId
+              baseCurrencyId: transaction.baseCurrencyId,
             }),
             referenceType: "SALE_CANCEL",
             referenceId: sale.id,
             note: parsed.data.reason ?? "Sale cancellation",
-            createdByUserId: authUser?.id ?? null
-          }
+            createdByUserId: authUser?.id ?? null,
+          },
         });
       }
     }
 
     const partyTransactions = await tx.partyTransaction.findMany({
       where: {
-        referenceId: sale.id
-      }
+        referenceId: sale.id,
+      },
     });
 
     for (const transaction of partyTransactions) {
@@ -819,9 +819,9 @@ salesRoute.post("/:id/cancel", async (c) => {
         where: {
           partyId_currencyId: {
             partyId: transaction.partyId,
-            currencyId: transaction.currencyId
-          }
-        }
+            currencyId: transaction.currencyId,
+          },
+        },
       });
 
       if (!account) continue;
@@ -829,12 +829,12 @@ salesRoute.post("/:id/cancel", async (c) => {
       if (transaction.side === PartyAccountSide.DEBIT) {
         await tx.partyAccount.update({
           where: { id: account.id },
-          data: { debitBalance: { decrement: transaction.amount } }
+          data: { debitBalance: { decrement: transaction.amount } },
         });
       } else {
         await tx.partyAccount.update({
           where: { id: account.id },
-          data: { creditBalance: { decrement: transaction.amount } }
+          data: { creditBalance: { decrement: transaction.amount } },
         });
       }
 
@@ -843,12 +843,15 @@ salesRoute.post("/:id/cancel", async (c) => {
           partyId: transaction.partyId,
           currencyId: transaction.currencyId,
           type: PartyTransactionType.ADJUSTMENT,
-          side: transaction.side === PartyAccountSide.DEBIT ? PartyAccountSide.CREDIT : PartyAccountSide.DEBIT,
+          side:
+            transaction.side === PartyAccountSide.DEBIT
+              ? PartyAccountSide.CREDIT
+              : PartyAccountSide.DEBIT,
           amount: transaction.amount,
           referenceType: "SALE_CANCEL",
           referenceId: sale.id,
-          note: parsed.data.reason ?? "Sale cancellation"
-        }
+          note: parsed.data.reason ?? "Sale cancellation",
+        },
       });
     }
 
@@ -859,7 +862,7 @@ salesRoute.post("/:id/cancel", async (c) => {
       reversalSourceId: sale.id,
       entryNoPrefix: "JE-SC",
       description: "Sale cancellation",
-      createdByUserId: authUser?.id ?? null
+      createdByUserId: authUser?.id ?? null,
     });
 
     if (!journalEntry) {
@@ -870,7 +873,7 @@ salesRoute.post("/:id/cancel", async (c) => {
         reversalSourceId: sale.id,
         entryNoPrefix: "JE-SC",
         description: "Sale cancellation",
-        createdByUserId: authUser?.id ?? null
+        createdByUserId: authUser?.id ?? null,
       });
     }
 
@@ -881,7 +884,7 @@ salesRoute.post("/:id/cancel", async (c) => {
       reversalSourceId: sale.id,
       entryNoPrefix: "JE-COGS-CANCEL",
       description: "COGS reversal for sale cancellation",
-      createdByUserId: authUser?.id ?? null
+      createdByUserId: authUser?.id ?? null,
     });
 
     const updatedSale = await tx.sale.update({
@@ -895,8 +898,8 @@ salesRoute.post("/:id/cancel", async (c) => {
         baseRemainingAmount: 0,
         note: [sale.note, parsed.data.reason ? `Cancelled: ${parsed.data.reason}` : "Cancelled"]
           .filter(Boolean)
-          .join("\n")
-      }
+          .join("\n"),
+      },
     });
 
     return { sale: updatedSale, journalEntry, cogsJournalEntry };
@@ -904,7 +907,7 @@ salesRoute.post("/:id/cancel", async (c) => {
 
   const fullCancelledSale = await prisma.sale.findUnique({
     where: { id: sale.id },
-    include: saleResponseInclude
+    include: saleResponseInclude,
   });
 
   if (!fullCancelledSale) {
@@ -913,7 +916,7 @@ salesRoute.post("/:id/cancel", async (c) => {
 
   const responseResult = {
     ...result,
-    sale: fullCancelledSale
+    sale: fullCancelledSale,
   };
 
   await writeAudit(c, {
@@ -921,8 +924,8 @@ salesRoute.post("/:id/cancel", async (c) => {
     entityType: "Sale",
     entityId: sale.id,
     metadata: {
-      reason: parsed.data.reason ?? null
-    }
+      reason: parsed.data.reason ?? null,
+    },
   });
 
   return c.json({ data: responseResult });
@@ -943,8 +946,8 @@ salesRoute.post("/:id/payments", async (c) => {
     where: { id },
     include: {
       customer: true,
-      currency: true
-    }
+      currency: true,
+    },
   });
 
   if (!sale) {
@@ -965,17 +968,15 @@ salesRoute.post("/:id/payments", async (c) => {
     return c.json({ message: "Customer is required for invoice payment" }, 400);
   }
 
-  let paymentAccount:
-    | {
-        kind: "CASH" | "BANK";
-        id: string;
-        currencyId: string;
-      }
-    | null = null;
+  let paymentAccount: {
+    kind: "CASH" | "BANK";
+    id: string;
+    currencyId: string;
+  } | null = null;
 
   if (parsed.data.paymentAccountType === "CASH") {
     const account = await prisma.cashRegisterAccount.findUnique({
-      where: { id: parsed.data.paymentAccountId }
+      where: { id: parsed.data.paymentAccountId },
     });
 
     if (!account) {
@@ -985,11 +986,11 @@ salesRoute.post("/:id/payments", async (c) => {
     paymentAccount = {
       kind: "CASH",
       id: account.id,
-      currencyId: account.currencyId
+      currencyId: account.currencyId,
     };
   } else {
     const account = await prisma.bankAccount.findUnique({
-      where: { id: parsed.data.paymentAccountId }
+      where: { id: parsed.data.paymentAccountId },
     });
 
     if (!account) {
@@ -999,7 +1000,7 @@ salesRoute.post("/:id/payments", async (c) => {
     paymentAccount = {
       kind: "BANK",
       id: account.id,
-      currencyId: account.currencyId
+      currencyId: account.currencyId,
     };
   }
 
@@ -1011,7 +1012,7 @@ salesRoute.post("/:id/payments", async (c) => {
   const nextRemaining = remainingAmount - parsed.data.amount;
   const saleSnapshot = {
     exchangeRate: Number(sale.exchangeRate || 1),
-    baseCurrencyId: sale.baseCurrencyId ?? null
+    baseCurrencyId: sale.baseCurrencyId ?? null,
   };
   const nextStatus =
     nextRemaining <= 0
@@ -1028,7 +1029,7 @@ salesRoute.post("/:id/payments", async (c) => {
         remainingAmount: nextRemaining,
         basePaidAmount: toBaseAmount(nextPaid, saleSnapshot),
         baseRemainingAmount: toBaseAmount(nextRemaining, saleSnapshot),
-        paymentStatus: nextStatus
+        paymentStatus: nextStatus,
       },
       include: {
         customer: true,
@@ -1040,30 +1041,30 @@ salesRoute.post("/:id/payments", async (c) => {
             product: true,
             warehouse: true,
             unit: true,
-            lot: true
-          }
-        }
-      }
+            lot: true,
+          },
+        },
+      },
     });
 
     await tx.partyAccount.upsert({
       where: {
         partyId_currencyId: {
           partyId: sale.customerId!,
-          currencyId: sale.currencyId
-        }
+          currencyId: sale.currencyId,
+        },
       },
       create: {
         partyId: sale.customerId!,
         currencyId: sale.currencyId,
         debitBalance: 0,
-        creditBalance: parsed.data.amount
+        creditBalance: parsed.data.amount,
       },
       update: {
         creditBalance: {
-          increment: parsed.data.amount
-        }
-      }
+          increment: parsed.data.amount,
+        },
+      },
     });
 
     const partyTransaction = await tx.partyTransaction.create({
@@ -1075,8 +1076,8 @@ salesRoute.post("/:id/payments", async (c) => {
         amount: parsed.data.amount,
         referenceType: "SALE_PAYMENT",
         referenceId: sale.id,
-        note: parsed.data.note ?? "Sale invoice payment"
-      }
+        note: parsed.data.note ?? "Sale invoice payment",
+      },
     });
 
     let moneyTransaction = null;
@@ -1084,7 +1085,7 @@ salesRoute.post("/:id/payments", async (c) => {
     if (paymentAccount.kind === "CASH") {
       const updatedAccount = await tx.cashRegisterAccount.update({
         where: { id: paymentAccount.id },
-        data: { balance: { increment: parsed.data.amount } }
+        data: { balance: { increment: parsed.data.amount } },
       });
 
       moneyTransaction = await tx.moneyTransaction.create({
@@ -1097,19 +1098,19 @@ salesRoute.post("/:id/payments", async (c) => {
           balanceAfter: updatedAccount.balance,
           ...snapshotBaseFields(saleSnapshot, {
             amount: parsed.data.amount,
-            balanceAfter: Number(updatedAccount.balance)
+            balanceAfter: Number(updatedAccount.balance),
           }),
           referenceType: "SALE_PAYMENT",
           referenceId: partyTransaction.id,
           note: parsed.data.note ?? "Sale invoice payment",
           createdByUserId: authUser?.id || null,
-          posDeviceId: posDevice?.id || null
-        }
+          posDeviceId: posDevice?.id || null,
+        },
       });
     } else {
       const updatedAccount = await tx.bankAccount.update({
         where: { id: paymentAccount.id },
-        data: { balance: { increment: parsed.data.amount } }
+        data: { balance: { increment: parsed.data.amount } },
       });
 
       moneyTransaction = await tx.moneyTransaction.create({
@@ -1122,14 +1123,14 @@ salesRoute.post("/:id/payments", async (c) => {
           balanceAfter: updatedAccount.balance,
           ...snapshotBaseFields(saleSnapshot, {
             amount: parsed.data.amount,
-            balanceAfter: Number(updatedAccount.balance)
+            balanceAfter: Number(updatedAccount.balance),
           }),
           referenceType: "SALE_PAYMENT",
           referenceId: partyTransaction.id,
           note: parsed.data.note ?? "Sale invoice payment",
           createdByUserId: authUser?.id || null,
-          posDeviceId: posDevice?.id || null
-        }
+          posDeviceId: posDevice?.id || null,
+        },
       });
     }
 
@@ -1146,7 +1147,7 @@ salesRoute.post("/:id/payments", async (c) => {
           debit: parsed.data.amount,
           exchangeRate: saleSnapshot.exchangeRate,
           baseCurrencyId: saleSnapshot.baseCurrencyId,
-          note: parsed.data.note ?? "Sale payment received"
+          note: parsed.data.note ?? "Sale payment received",
         },
         {
           accountCode: "1200",
@@ -1154,9 +1155,9 @@ salesRoute.post("/:id/payments", async (c) => {
           credit: parsed.data.amount,
           exchangeRate: saleSnapshot.exchangeRate,
           baseCurrencyId: saleSnapshot.baseCurrencyId,
-          note: "Customer receivable reduced"
-        }
-      ]
+          note: "Customer receivable reduced",
+        },
+      ],
     });
 
     return { sale: updatedSale, partyTransaction, moneyTransaction, journalEntry };
@@ -1168,8 +1169,8 @@ salesRoute.post("/:id/payments", async (c) => {
     entityId: sale.id,
     metadata: {
       amount: parsed.data.amount,
-      remainingAmount: nextRemaining
-    }
+      remainingAmount: nextRemaining,
+    },
   });
 
   return c.json({ data: result }, 201);
@@ -1188,7 +1189,7 @@ salesRoute.post("/", async (c) => {
     try {
       const replay = await loadIdempotentSaleResult(
         parsed.data.clientRequestId,
-        authUser?.id || null
+        authUser?.id || null,
       );
 
       if (replay) {
@@ -1201,12 +1202,9 @@ salesRoute.post("/", async (c) => {
 
       return c.json(
         {
-          message:
-            error instanceof Error
-              ? error.message
-              : "Sale request ID could not be verified"
+          message: error instanceof Error ? error.message : "Sale request ID could not be verified",
         },
-        409
+        409,
       );
     }
   }
@@ -1214,7 +1212,7 @@ salesRoute.post("/", async (c) => {
   const posDevice = await getRequestPosDevice(c, authUser?.id || null);
 
   const currency = await prisma.currency.findUnique({
-    where: { id: parsed.data.currencyId }
+    where: { id: parsed.data.currencyId },
   });
 
   if (!currency) {
@@ -1223,7 +1221,7 @@ salesRoute.post("/", async (c) => {
 
   if (parsed.data.customerId) {
     const customer = await prisma.party.findUnique({
-      where: { id: parsed.data.customerId }
+      where: { id: parsed.data.customerId },
     });
 
     if (!customer) {
@@ -1270,8 +1268,8 @@ salesRoute.post("/", async (c) => {
     const product = await prisma.product.findUnique({
       where: { id: rawItem.productId },
       include: {
-        units: true
-      }
+        units: true,
+      },
     });
 
     if (!product) {
@@ -1279,7 +1277,7 @@ salesRoute.post("/", async (c) => {
     }
 
     const warehouse = await prisma.warehouse.findUnique({
-      where: { id: rawItem.warehouseId }
+      where: { id: rawItem.warehouseId },
     });
 
     if (!warehouse) {
@@ -1297,9 +1295,9 @@ salesRoute.post("/", async (c) => {
     } else {
       return c.json(
         {
-          message: `Unit is not configured for product: ${product.name}`
+          message: `Unit is not configured for product: ${product.name}`,
         },
-        400
+        400,
       );
     }
 
@@ -1310,15 +1308,11 @@ salesRoute.post("/", async (c) => {
         productId: rawItem.productId,
         warehouseId: rawItem.warehouseId,
         remainingQuantity: {
-          gt: 0
+          gt: 0,
         },
-        ...(rawItem.lotId ? { id: rawItem.lotId } : {})
+        ...(rawItem.lotId ? { id: rawItem.lotId } : {}),
       },
-      orderBy: [
-        { expiryDate: "asc" },
-        { createdAt: "asc" },
-        { id: "asc" }
-      ]
+      orderBy: [{ expiryDate: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     });
 
     let remainingToAllocate = quantityBase;
@@ -1344,9 +1338,7 @@ salesRoute.post("/", async (c) => {
       const lotCanFinishLine = available + 0.00005 >= remainingToAllocate;
       const allocatedQuantity = lotCanFinishLine
         ? remainingQuantityToAllocate
-        : Math.floor(
-            ((available / conversionRate) + Number.EPSILON) * 10_000
-          ) / 10_000;
+        : Math.floor((available / conversionRate + Number.EPSILON) * 10_000) / 10_000;
       const allocatedBase = lotCanFinishLine
         ? remainingToAllocate
         : roundStockQuantity(allocatedQuantity * conversionRate);
@@ -1368,14 +1360,12 @@ salesRoute.post("/", async (c) => {
         baseTotalCost: allocatedBase * baseUnitCost,
         costExchangeRate,
         currencyId: lot.currencyId,
-        expiryDate: lot.expiryDate
+        expiryDate: lot.expiryDate,
       });
 
-      remainingToAllocate = roundStockQuantity(
-        remainingToAllocate - allocatedBase
-      );
+      remainingToAllocate = roundStockQuantity(remainingToAllocate - allocatedBase);
       remainingQuantityToAllocate = roundStockQuantity(
-        remainingQuantityToAllocate - allocatedQuantity
+        remainingQuantityToAllocate - allocatedQuantity,
       );
     }
 
@@ -1384,9 +1374,9 @@ salesRoute.post("/", async (c) => {
         {
           message: `Not enough stock for product: ${product.name}`,
           required: quantityBase,
-          missing: remainingToAllocate
+          missing: remainingToAllocate,
         },
-        400
+        400,
       );
     }
 
@@ -1396,9 +1386,9 @@ salesRoute.post("/", async (c) => {
     if (itemDiscount > grossTotal) {
       return c.json(
         {
-          message: `Discount cannot be greater than item total for product: ${product.name}`
+          message: `Discount cannot be greater than item total for product: ${product.name}`,
         },
-        400
+        400,
       );
     }
 
@@ -1413,7 +1403,7 @@ salesRoute.post("/", async (c) => {
       unitPrice: rawItem.unitPrice,
       discount: itemDiscount,
       totalPrice: roundMoney4(grossTotal - itemDiscount),
-      allocations
+      allocations,
     });
   }
 
@@ -1423,10 +1413,7 @@ salesRoute.post("/", async (c) => {
       roundMoney4(preparedItem.quantity * preparedItem.unitPrice),
       weights,
     );
-    const itemDiscountAllocations = allocateMoneyByWeight(
-      preparedItem.discount,
-      weights,
-    );
+    const itemDiscountAllocations = allocateMoneyByWeight(preparedItem.discount, weights);
 
     return preparedItem.allocations.map((allocation, index) => {
       const lineDiscount = itemDiscountAllocations[index] ?? 0;
@@ -1441,9 +1428,7 @@ salesRoute.post("/", async (c) => {
     });
   });
 
-  const subtotal = roundMoney4(
-    saleLines.reduce((sum, line) => sum + line.lineTotal, 0),
-  );
+  const subtotal = roundMoney4(saleLines.reduce((sum, line) => sum + line.lineTotal, 0));
   const documentDiscount = roundMoney4(parsed.data.discount);
   const total = roundMoney4(subtotal - documentDiscount);
 
@@ -1464,9 +1449,7 @@ salesRoute.post("/", async (c) => {
   const pricedSaleLines = saleLines.map((line, index) => ({
     ...line,
     documentDiscountAllocated: documentDiscountAllocations[index] ?? 0,
-    netTotalPrice: roundMoney4(
-      line.lineTotal - (documentDiscountAllocations[index] ?? 0),
-    ),
+    netTotalPrice: roundMoney4(line.lineTotal - (documentDiscountAllocations[index] ?? 0)),
   }));
 
   const lineNetTotal = roundMoney4(
@@ -1485,8 +1468,8 @@ salesRoute.post("/", async (c) => {
             {
               paymentAccountType: parsed.data.paymentAccountType,
               paymentAccountId: parsed.data.paymentAccountId,
-              amount: paidAmount
-            }
+              amount: paidAmount,
+            },
           ]
         : [];
 
@@ -1505,7 +1488,10 @@ salesRoute.post("/", async (c) => {
   }
 
   if (paidAmount > 0 && requestedPaymentLines.length === 0) {
-    return c.json({ message: "Payment account is required when paidAmount is greater than zero" }, 400);
+    return c.json(
+      { message: "Payment account is required when paidAmount is greater than zero" },
+      400,
+    );
   }
 
   const paymentLines: Array<{
@@ -1516,17 +1502,15 @@ salesRoute.post("/", async (c) => {
   }> = [];
 
   for (const line of requestedPaymentLines) {
-    let paymentAccount:
-      | {
-          kind: "CASH" | "BANK";
-          id: string;
-          currencyId: string;
-        }
-      | null = null;
+    let paymentAccount: {
+      kind: "CASH" | "BANK";
+      id: string;
+      currencyId: string;
+    } | null = null;
 
     if (line.paymentAccountType === "CASH") {
       const account = await prisma.cashRegisterAccount.findUnique({
-        where: { id: line.paymentAccountId }
+        where: { id: line.paymentAccountId },
       });
 
       if (!account) {
@@ -1536,11 +1520,11 @@ salesRoute.post("/", async (c) => {
       paymentAccount = {
         kind: "CASH",
         id: account.id,
-        currencyId: account.currencyId
+        currencyId: account.currencyId,
       };
     } else {
       const account = await prisma.bankAccount.findUnique({
-        where: { id: line.paymentAccountId }
+        where: { id: line.paymentAccountId },
       });
 
       if (!account) {
@@ -1550,7 +1534,7 @@ salesRoute.post("/", async (c) => {
       paymentAccount = {
         kind: "BANK",
         id: account.id,
-        currencyId: account.currencyId
+        currencyId: account.currencyId,
       };
     }
 
@@ -1560,7 +1544,7 @@ salesRoute.post("/", async (c) => {
 
     paymentLines.push({
       ...paymentAccount,
-      amount: roundMoney4(line.amount)
+      amount: roundMoney4(line.amount),
     });
   }
 
@@ -1569,7 +1553,7 @@ salesRoute.post("/", async (c) => {
       ? SalePaymentStatus.PAID
       : paidAmount > 0
         ? SalePaymentStatus.PARTIAL
-      : SalePaymentStatus.UNPAID;
+        : SalePaymentStatus.UNPAID;
 
   let currencySnapshot;
 
@@ -1578,7 +1562,7 @@ salesRoute.post("/", async (c) => {
   } catch (error) {
     return c.json(
       { message: error instanceof Error ? error.message : "Currency rate could not be resolved" },
-      400
+      400,
     );
   }
 
@@ -1587,388 +1571,390 @@ salesRoute.post("/", async (c) => {
     parsed.data.clientRequestId ||
       c.req.header("Idempotency-Key") ||
       c.req.header("x-idempotency-key"),
-    "SALE"
+    "SALE",
   );
-  const runSaleTransaction = () => prisma.$transaction(async (tx) => {
-    const inventory = new InventoryMutationService(tx);
-    await inventory.prepare(
-      preparedItems.map((preparedItem) => ({
-        productId: preparedItem.productId,
-        warehouseId: preparedItem.warehouseId
-      }))
-    );
-    if (parsed.data.clientRequestId) {
-      const committedSale = await tx.sale.findUnique({
-        where: { clientRequestId: parsed.data.clientRequestId },
-        select: { cashierId: true }
-      });
-      if (committedSale) {
-        if (committedSale.cashierId && committedSale.cashierId !== (authUser?.id || null)) {
-          throw new SaleRequestOwnershipError("This sale request ID belongs to another user");
-        }
-        throw new SaleIdempotentReplayError();
-      }
-    }
-    const lockedPreparedItems = [];
-    for (const preparedItem of preparedItems) {
-      const lots = await tx.stockLot.findMany({
-        where: {
-          productId: preparedItem.productId,
-          warehouseId: preparedItem.warehouseId,
-          remainingQuantity: { gt: 0 },
-          ...(preparedItem.lotId ? { id: preparedItem.lotId } : {})
-        },
-        orderBy: [{ expiryDate: "asc" }, { createdAt: "asc" }, { id: "asc" }]
-      });
-      let remainingToAllocate = preparedItem.quantityBase;
-      let remainingQuantityToAllocate = roundStockQuantity(preparedItem.quantity);
-      const allocations: typeof preparedItem.allocations = [];
-
-      for (const lot of lots) {
-        if (remainingToAllocate <= 0) break;
-        const available = roundStockQuantity(Number(lot.remainingQuantity));
-        const lotCanFinishLine = available + 0.00005 >= remainingToAllocate;
-        const allocatedQuantity = lotCanFinishLine
-          ? remainingQuantityToAllocate
-          : Math.floor(
-              ((available / preparedItem.conversionRate) + Number.EPSILON) * 10_000
-            ) / 10_000;
-        const allocatedBase = lotCanFinishLine
-          ? remainingToAllocate
-          : roundStockQuantity(allocatedQuantity * preparedItem.conversionRate);
-        if (allocatedQuantity <= 0) continue;
-        const unitCostBase = Number(lot.unitCost);
-        const costExchangeRate = Number(lot.exchangeRate || 1);
-        const baseUnitCost = Number(
-          lot.baseUnitCost || unitCostBase * costExchangeRate
-        );
-
-        allocations.push({
-          lotId: lot.id,
-          quantityBase: allocatedBase,
-          quantity: allocatedQuantity,
-          unitCostBase,
-          totalCost: allocatedBase * unitCostBase,
-          baseUnitCost,
-          baseTotalCost: allocatedBase * baseUnitCost,
-          costExchangeRate,
-          currencyId: lot.currencyId,
-          expiryDate: lot.expiryDate
-        });
-        remainingToAllocate = roundStockQuantity(remainingToAllocate - allocatedBase);
-        remainingQuantityToAllocate = roundStockQuantity(
-          remainingQuantityToAllocate - allocatedQuantity
-        );
-      }
-
-      if (remainingToAllocate > 0) {
-        throw new Error("Not enough stock for concurrent sale");
-      }
-      lockedPreparedItems.push({ ...preparedItem, allocations });
-    }
-    const lockedSaleLines = lockedPreparedItems.flatMap((preparedItem) => {
-      const weights = preparedItem.allocations.map((allocation) => allocation.quantity);
-      const grossAllocations = allocateMoneyByWeight(
-        roundMoney4(preparedItem.quantity * preparedItem.unitPrice),
-        weights
-      );
-      const itemDiscountAllocations = allocateMoneyByWeight(
-        preparedItem.discount,
-        weights
-      );
-      return preparedItem.allocations.map((allocation, index) => ({
-        preparedItem,
-        allocation,
-        lineDiscount: itemDiscountAllocations[index] ?? 0,
-        lineTotal: roundMoney4(
-          (grossAllocations[index] ?? 0) - (itemDiscountAllocations[index] ?? 0)
-        )
-      }));
-    });
-    const lockedDocumentDiscountAllocations = allocateMoneyByWeight(
-      documentDiscount,
-      lockedSaleLines.map((line) => line.lineTotal)
-    );
-    const lockedPricedSaleLines = lockedSaleLines.map((line, index) => ({
-      ...line,
-      documentDiscountAllocated: lockedDocumentDiscountAllocations[index] ?? 0,
-      netTotalPrice: roundMoney4(
-        line.lineTotal - (lockedDocumentDiscountAllocations[index] ?? 0)
-      )
-    }));
-    const inventoryOperation = await inventory.startOperation({
-      ...inventoryOperationEvidence(c),
-      type: "SALE",
-      clientRequestId: inventoryClientRequestId,
-      occurredAt: inventoryOccurredAt,
-      createdByUserId: authUser?.id
-    });
-
-    const sale = await tx.sale.create({
-      data: {
-        clientRequestId: parsed.data.clientRequestId ?? null,
-        invoiceNo: parsed.data.invoiceNo ?? null,
-        customerId: parsed.data.customerId ?? null,
-        currencyId: parsed.data.currencyId,
-        status: SaleStatus.COMPLETED,
-        paymentStatus,
-        subtotal,
-        discount: documentDiscount,
-        total,
-        paidAmount,
-        remainingAmount,
-        ...snapshotBaseFields(currencySnapshot, {
-          subtotal,
-          total,
-          paidAmount,
-          remainingAmount
-        }),
-        saleDate: saleDate || new Date(),
-        note: parsed.data.note ?? null,
-        cashierId: authUser?.id || null,
-        posDeviceId: posDevice?.id || null
-      }
-    });
-
-    const createdItems = [];
-
-    for (const pricedLine of lockedPricedSaleLines) {
-        const { preparedItem, allocation } = pricedLine;
-        const stockUpdate = await tx.stockLot.updateMany({
-          where: {
-            id: allocation.lotId,
-            remainingQuantity: {
-              gte: stockDecimal(allocation.quantityBase)
-            }
-          },
-          data: {
-            remainingQuantity: {
-              decrement: stockDecimal(allocation.quantityBase)
-            }
-          }
-        });
-
-        if (stockUpdate.count !== 1) {
-          throw new Error("Not enough stock for concurrent sale");
-        }
-
-        await tx.stockMovement.create({
-          data: {
+  const runSaleTransaction = () =>
+    prisma.$transaction(
+      async (tx) => {
+        const inventory = new InventoryMutationService(tx);
+        await inventory.prepare(
+          preparedItems.map((preparedItem) => ({
             productId: preparedItem.productId,
             warehouseId: preparedItem.warehouseId,
-            lotId: allocation.lotId,
-            type: StockMovementType.SALE,
-            quantity: allocation.quantityBase,
-            unitCost: allocation.unitCostBase,
-            currencyId: allocation.currencyId,
-            operationId: inventoryOperation.id,
-            occurredAt: inventoryOccurredAt,
-            exchangeRate: allocation.costExchangeRate,
-            baseUnitCost: allocation.baseUnitCost,
-            referenceType: "SALE",
-            referenceId: sale.id,
+          })),
+        );
+        if (parsed.data.clientRequestId) {
+          const committedSale = await tx.sale.findUnique({
+            where: { clientRequestId: parsed.data.clientRequestId },
+            select: { cashierId: true },
+          });
+          if (committedSale) {
+            if (committedSale.cashierId && committedSale.cashierId !== (authUser?.id || null)) {
+              throw new SaleRequestOwnershipError("This sale request ID belongs to another user");
+            }
+            throw new SaleIdempotentReplayError();
+          }
+        }
+        const lockedPreparedItems = [];
+        for (const preparedItem of preparedItems) {
+          const lots = await tx.stockLot.findMany({
+            where: {
+              productId: preparedItem.productId,
+              warehouseId: preparedItem.warehouseId,
+              remainingQuantity: { gt: 0 },
+              ...(preparedItem.lotId ? { id: preparedItem.lotId } : {}),
+            },
+            orderBy: [{ expiryDate: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+          });
+          let remainingToAllocate = preparedItem.quantityBase;
+          let remainingQuantityToAllocate = roundStockQuantity(preparedItem.quantity);
+          const allocations: typeof preparedItem.allocations = [];
+
+          for (const lot of lots) {
+            if (remainingToAllocate <= 0) break;
+            const available = roundStockQuantity(Number(lot.remainingQuantity));
+            const lotCanFinishLine = available + 0.00005 >= remainingToAllocate;
+            const allocatedQuantity = lotCanFinishLine
+              ? remainingQuantityToAllocate
+              : Math.floor((available / preparedItem.conversionRate + Number.EPSILON) * 10_000) /
+                10_000;
+            const allocatedBase = lotCanFinishLine
+              ? remainingToAllocate
+              : roundStockQuantity(allocatedQuantity * preparedItem.conversionRate);
+            if (allocatedQuantity <= 0) continue;
+            const unitCostBase = Number(lot.unitCost);
+            const costExchangeRate = Number(lot.exchangeRate || 1);
+            const baseUnitCost = Number(lot.baseUnitCost || unitCostBase * costExchangeRate);
+
+            allocations.push({
+              lotId: lot.id,
+              quantityBase: allocatedBase,
+              quantity: allocatedQuantity,
+              unitCostBase,
+              totalCost: allocatedBase * unitCostBase,
+              baseUnitCost,
+              baseTotalCost: allocatedBase * baseUnitCost,
+              costExchangeRate,
+              currencyId: lot.currencyId,
+              expiryDate: lot.expiryDate,
+            });
+            remainingToAllocate = roundStockQuantity(remainingToAllocate - allocatedBase);
+            remainingQuantityToAllocate = roundStockQuantity(
+              remainingQuantityToAllocate - allocatedQuantity,
+            );
+          }
+
+          if (remainingToAllocate > 0) {
+            throw new Error("Not enough stock for concurrent sale");
+          }
+          lockedPreparedItems.push({ ...preparedItem, allocations });
+        }
+        const lockedSaleLines = lockedPreparedItems.flatMap((preparedItem) => {
+          const weights = preparedItem.allocations.map((allocation) => allocation.quantity);
+          const grossAllocations = allocateMoneyByWeight(
+            roundMoney4(preparedItem.quantity * preparedItem.unitPrice),
+            weights,
+          );
+          const itemDiscountAllocations = allocateMoneyByWeight(preparedItem.discount, weights);
+          return preparedItem.allocations.map((allocation, index) => ({
+            preparedItem,
+            allocation,
+            lineDiscount: itemDiscountAllocations[index] ?? 0,
+            lineTotal: roundMoney4(
+              (grossAllocations[index] ?? 0) - (itemDiscountAllocations[index] ?? 0),
+            ),
+          }));
+        });
+        const lockedDocumentDiscountAllocations = allocateMoneyByWeight(
+          documentDiscount,
+          lockedSaleLines.map((line) => line.lineTotal),
+        );
+        const lockedPricedSaleLines = lockedSaleLines.map((line, index) => ({
+          ...line,
+          documentDiscountAllocated: lockedDocumentDiscountAllocations[index] ?? 0,
+          netTotalPrice: roundMoney4(
+            line.lineTotal - (lockedDocumentDiscountAllocations[index] ?? 0),
+          ),
+        }));
+        const inventoryOperation = await inventory.startOperation({
+          ...inventoryOperationEvidence(c),
+          type: "SALE",
+          clientRequestId: inventoryClientRequestId,
+          occurredAt: inventoryOccurredAt,
+          createdByUserId: authUser?.id,
+        });
+
+        const sale = await tx.sale.create({
+          data: {
+            clientRequestId: parsed.data.clientRequestId ?? null,
+            invoiceNo: parsed.data.invoiceNo ?? null,
+            customerId: parsed.data.customerId ?? null,
+            currencyId: parsed.data.currencyId,
+            status: SaleStatus.COMPLETED,
+            paymentStatus,
+            subtotal,
+            discount: documentDiscount,
+            total,
+            paidAmount,
+            remainingAmount,
+            ...snapshotBaseFields(currencySnapshot, {
+              subtotal,
+              total,
+              paidAmount,
+              remainingAmount,
+            }),
+            saleDate: saleDate || new Date(),
             note: parsed.data.note ?? null,
-            createdByUserId: authUser?.id || null
-          }
+            cashierId: authUser?.id || null,
+            posDeviceId: posDevice?.id || null,
+          },
         });
 
-        const saleItem = await tx.saleItem.create({
-          data: {
-            saleId: sale.id,
-            productId: preparedItem.productId,
-            warehouseId: preparedItem.warehouseId,
-            unitId: preparedItem.unitId,
-            lotId: allocation.lotId,
-            quantity: allocation.quantity,
-            conversionRate: preparedItem.conversionRate,
-            quantityBase: allocation.quantityBase,
-            unitPrice: preparedItem.unitPrice,
-            discount: pricedLine.lineDiscount,
-            totalPrice: pricedLine.lineTotal,
-            documentDiscountAllocated: pricedLine.documentDiscountAllocated,
-            netTotalPrice: pricedLine.netTotalPrice,
-            unitCostBase: allocation.unitCostBase,
-            totalCost: allocation.totalCost,
-            baseTotalCost: allocation.baseTotalCost,
-            expiryDate: allocation.expiryDate
+        const createdItems = [];
+
+        for (const pricedLine of lockedPricedSaleLines) {
+          const { preparedItem, allocation } = pricedLine;
+          const stockUpdate = await tx.stockLot.updateMany({
+            where: {
+              id: allocation.lotId,
+              remainingQuantity: {
+                gte: stockDecimal(allocation.quantityBase),
+              },
+            },
+            data: {
+              remainingQuantity: {
+                decrement: stockDecimal(allocation.quantityBase),
+              },
+            },
+          });
+
+          if (stockUpdate.count !== 1) {
+            throw new Error("Not enough stock for concurrent sale");
           }
-        });
 
-        createdItems.push(saleItem);
-    }
+          await tx.stockMovement.create({
+            data: {
+              productId: preparedItem.productId,
+              warehouseId: preparedItem.warehouseId,
+              lotId: allocation.lotId,
+              type: StockMovementType.SALE,
+              quantity: allocation.quantityBase,
+              unitCost: allocation.unitCostBase,
+              currencyId: allocation.currencyId,
+              operationId: inventoryOperation.id,
+              occurredAt: inventoryOccurredAt,
+              exchangeRate: allocation.costExchangeRate,
+              baseUnitCost: allocation.baseUnitCost,
+              referenceType: "SALE",
+              referenceId: sale.id,
+              note: parsed.data.note ?? null,
+              createdByUserId: authUser?.id || null,
+            },
+          });
 
-    const moneyTransactions = [];
+          const saleItem = await tx.saleItem.create({
+            data: {
+              saleId: sale.id,
+              productId: preparedItem.productId,
+              warehouseId: preparedItem.warehouseId,
+              unitId: preparedItem.unitId,
+              lotId: allocation.lotId,
+              quantity: allocation.quantity,
+              conversionRate: preparedItem.conversionRate,
+              quantityBase: allocation.quantityBase,
+              unitPrice: preparedItem.unitPrice,
+              discount: pricedLine.lineDiscount,
+              totalPrice: pricedLine.lineTotal,
+              documentDiscountAllocated: pricedLine.documentDiscountAllocated,
+              netTotalPrice: pricedLine.netTotalPrice,
+              unitCostBase: allocation.unitCostBase,
+              totalCost: allocation.totalCost,
+              baseTotalCost: allocation.baseTotalCost,
+              expiryDate: allocation.expiryDate,
+            },
+          });
 
-    for (const paymentLine of paymentLines) {
-      if (paymentLine.kind === "CASH") {
-        const updatedAccount = await tx.cashRegisterAccount.update({
-          where: { id: paymentLine.id },
-          data: {
-            balance: {
-              increment: paymentLine.amount
-            }
-          }
-        });
+          createdItems.push(saleItem);
+        }
 
-        const moneyTransaction = await tx.moneyTransaction.create({
-          data: {
-            currencyId: parsed.data.currencyId,
-            cashRegisterAccountId: paymentLine.id,
-            type: MoneyTransactionType.SALE_PAYMENT,
-            direction: MoneyDirection.IN,
-            amount: paymentLine.amount,
-            balanceAfter: updatedAccount.balance,
-            ...snapshotBaseFields(currencySnapshot, {
-              amount: paymentLine.amount,
-              balanceAfter: Number(updatedAccount.balance)
-            }),
-            referenceType: "SALE",
-            referenceId: sale.id,
-            note: "Sale payment",
-            createdByUserId: authUser?.id || null,
-            posDeviceId: posDevice?.id || null
-          }
-        });
+        const moneyTransactions = [];
 
-        moneyTransactions.push(moneyTransaction);
-      } else {
-        const updatedAccount = await tx.bankAccount.update({
-          where: { id: paymentLine.id },
-          data: {
-            balance: {
-              increment: paymentLine.amount
-            }
-          }
-        });
+        for (const paymentLine of paymentLines) {
+          if (paymentLine.kind === "CASH") {
+            const updatedAccount = await tx.cashRegisterAccount.update({
+              where: { id: paymentLine.id },
+              data: {
+                balance: {
+                  increment: paymentLine.amount,
+                },
+              },
+            });
 
-        const moneyTransaction = await tx.moneyTransaction.create({
-          data: {
-            currencyId: parsed.data.currencyId,
-            bankAccountId: paymentLine.id,
-            type: MoneyTransactionType.SALE_PAYMENT,
-            direction: MoneyDirection.IN,
-            amount: paymentLine.amount,
-            balanceAfter: updatedAccount.balance,
-            ...snapshotBaseFields(currencySnapshot, {
-              amount: paymentLine.amount,
-              balanceAfter: Number(updatedAccount.balance)
-            }),
-            referenceType: "SALE",
-            referenceId: sale.id,
-            note: "Sale payment",
-            createdByUserId: authUser?.id || null,
-            posDeviceId: posDevice?.id || null
-          }
-        });
+            const moneyTransaction = await tx.moneyTransaction.create({
+              data: {
+                currencyId: parsed.data.currencyId,
+                cashRegisterAccountId: paymentLine.id,
+                type: MoneyTransactionType.SALE_PAYMENT,
+                direction: MoneyDirection.IN,
+                amount: paymentLine.amount,
+                balanceAfter: updatedAccount.balance,
+                ...snapshotBaseFields(currencySnapshot, {
+                  amount: paymentLine.amount,
+                  balanceAfter: Number(updatedAccount.balance),
+                }),
+                referenceType: "SALE",
+                referenceId: sale.id,
+                note: "Sale payment",
+                createdByUserId: authUser?.id || null,
+                posDeviceId: posDevice?.id || null,
+              },
+            });
 
-        moneyTransactions.push(moneyTransaction);
-      }
-    }
+            moneyTransactions.push(moneyTransaction);
+          } else {
+            const updatedAccount = await tx.bankAccount.update({
+              where: { id: paymentLine.id },
+              data: {
+                balance: {
+                  increment: paymentLine.amount,
+                },
+              },
+            });
 
-    let customerTransaction = null;
+            const moneyTransaction = await tx.moneyTransaction.create({
+              data: {
+                currencyId: parsed.data.currencyId,
+                bankAccountId: paymentLine.id,
+                type: MoneyTransactionType.SALE_PAYMENT,
+                direction: MoneyDirection.IN,
+                amount: paymentLine.amount,
+                balanceAfter: updatedAccount.balance,
+                ...snapshotBaseFields(currencySnapshot, {
+                  amount: paymentLine.amount,
+                  balanceAfter: Number(updatedAccount.balance),
+                }),
+                referenceType: "SALE",
+                referenceId: sale.id,
+                note: "Sale payment",
+                createdByUserId: authUser?.id || null,
+                posDeviceId: posDevice?.id || null,
+              },
+            });
 
-    if (parsed.data.customerId && remainingAmount > 0) {
-      await tx.partyAccount.upsert({
-        where: {
-          partyId_currencyId: {
-            partyId: parsed.data.customerId,
-            currencyId: parsed.data.currencyId
-          }
-        },
-        create: {
-          partyId: parsed.data.customerId,
-          currencyId: parsed.data.currencyId,
-          debitBalance: remainingAmount,
-          creditBalance: 0
-        },
-        update: {
-          debitBalance: {
-            increment: remainingAmount
+            moneyTransactions.push(moneyTransaction);
           }
         }
-      });
 
-      customerTransaction = await tx.partyTransaction.create({
-        data: {
-          partyId: parsed.data.customerId,
-          currencyId: parsed.data.currencyId,
-          type: PartyTransactionType.SALE_CREDIT,
-          side: PartyAccountSide.DEBIT,
-          amount: remainingAmount,
-          referenceType: "SALE",
-          referenceId: sale.id,
-          note: "Credit sale"
+        let customerTransaction = null;
+
+        if (parsed.data.customerId && remainingAmount > 0) {
+          await tx.partyAccount.upsert({
+            where: {
+              partyId_currencyId: {
+                partyId: parsed.data.customerId,
+                currencyId: parsed.data.currencyId,
+              },
+            },
+            create: {
+              partyId: parsed.data.customerId,
+              currencyId: parsed.data.currencyId,
+              debitBalance: remainingAmount,
+              creditBalance: 0,
+            },
+            update: {
+              debitBalance: {
+                increment: remainingAmount,
+              },
+            },
+          });
+
+          customerTransaction = await tx.partyTransaction.create({
+            data: {
+              partyId: parsed.data.customerId,
+              currencyId: parsed.data.currencyId,
+              type: PartyTransactionType.SALE_CREDIT,
+              side: PartyAccountSide.DEBIT,
+              amount: remainingAmount,
+              referenceType: "SALE",
+              referenceId: sale.id,
+              note: "Credit sale",
+            },
+          });
         }
-      });
-    }
 
-    const journalEntry = await createPostedJournal(tx, {
-      entryNoPrefix: "JE-POS",
-      sourceType: "POS_SALE",
-      sourceId: sale.id,
-      description: `POS Sale ${sale.invoiceNo || sale.id}`,
-      createdByUserId: authUser?.id || null,
-      lines: [
-        ...paymentLines.map((line) => ({
-          accountCode: treasuryAccountCode(line.kind),
-          partyId: parsed.data.customerId || null,
-          debit: line.amount,
-          exchangeRate: currencySnapshot.exchangeRate,
-          baseCurrencyId: currencySnapshot.baseCurrencyId,
-          note: "Sale payment received"
-        })),
-        ...(remainingAmount > 0
-          ? [{
-              accountCode: "1200",
+        const journalEntry = await createPostedJournal(tx, {
+          entryNoPrefix: "JE-POS",
+          sourceType: "POS_SALE",
+          sourceId: sale.id,
+          description: `POS Sale ${sale.invoiceNo || sale.id}`,
+          createdByUserId: authUser?.id || null,
+          lines: [
+            ...paymentLines.map((line) => ({
+              accountCode: treasuryAccountCode(line.kind),
               partyId: parsed.data.customerId || null,
-              debit: remainingAmount,
+              debit: line.amount,
               exchangeRate: currencySnapshot.exchangeRate,
               baseCurrencyId: currencySnapshot.baseCurrencyId,
-              note: "Customer receivable"
-            }]
-          : []),
-        {
-          accountCode: "4000",
-          partyId: parsed.data.customerId || null,
-          credit: subtotal,
-          exchangeRate: currencySnapshot.exchangeRate,
-          baseCurrencyId: currencySnapshot.baseCurrencyId,
-          note: "Sales revenue"
-        },
-        ...(documentDiscount > 0
-          ? [{
-              accountCode: "4100",
+              note: "Sale payment received",
+            })),
+            ...(remainingAmount > 0
+              ? [
+                  {
+                    accountCode: "1200",
+                    partyId: parsed.data.customerId || null,
+                    debit: remainingAmount,
+                    exchangeRate: currencySnapshot.exchangeRate,
+                    baseCurrencyId: currencySnapshot.baseCurrencyId,
+                    note: "Customer receivable",
+                  },
+                ]
+              : []),
+            {
+              accountCode: "4000",
               partyId: parsed.data.customerId || null,
-              debit: documentDiscount,
+              credit: subtotal,
               exchangeRate: currencySnapshot.exchangeRate,
               baseCurrencyId: currencySnapshot.baseCurrencyId,
-              note: "Sales discount"
-            }]
-          : [])
-      ]
-    });
+              note: "Sales revenue",
+            },
+            ...(documentDiscount > 0
+              ? [
+                  {
+                    accountCode: "4100",
+                    partyId: parsed.data.customerId || null,
+                    debit: documentDiscount,
+                    exchangeRate: currencySnapshot.exchangeRate,
+                    baseCurrencyId: currencySnapshot.baseCurrencyId,
+                    note: "Sales discount",
+                  },
+                ]
+              : []),
+          ],
+        });
 
-    const cogsResult = await ensureSaleCogsJournal(tx, {
-      saleId: sale.id,
-      invoiceNo: sale.invoiceNo,
-      createdByUserId: authUser?.id || null
-    });
+        const cogsResult = await ensureSaleCogsJournal(tx, {
+          saleId: sale.id,
+          invoiceNo: sale.invoiceNo,
+          createdByUserId: authUser?.id || null,
+        });
 
-    return {
-      sale,
-      items: createdItems,
-      moneyTransactions,
-      customerTransaction,
-      journalEntry,
-      cogsJournal: cogsResult.journalEntry,
-      cogs: cogsResult.cogs,
-      cogsZeroCost: cogsResult.zeroCost,
-      idempotentReplay: false
-    };
-  }, {
-    maxWait: 10_000,
-    timeout: 30_000
-  });
+        return {
+          sale,
+          items: createdItems,
+          moneyTransactions,
+          customerTransaction,
+          journalEntry,
+          cogsJournal: cogsResult.journalEntry,
+          cogs: cogsResult.cogs,
+          cogsZeroCost: cogsResult.zeroCost,
+          idempotentReplay: false,
+        };
+      },
+      {
+        maxWait: 10_000,
+        timeout: 30_000,
+      },
+    );
 
   let result: Awaited<ReturnType<typeof runSaleTransaction>>;
 
@@ -1978,7 +1964,7 @@ salesRoute.post("/", async (c) => {
     if (parsed.data.clientRequestId && error instanceof SaleIdempotentReplayError) {
       const replay = await loadIdempotentSaleResult(
         parsed.data.clientRequestId,
-        authUser?.id || null
+        authUser?.id || null,
       );
       if (replay) {
         return c.json({ data: replay, idempotentReplay: true }, 200);
@@ -1992,7 +1978,7 @@ salesRoute.post("/", async (c) => {
     if (parsed.data.clientRequestId && isUniqueConstraintError(error)) {
       const replay = await loadIdempotentSaleResult(
         parsed.data.clientRequestId,
-        authUser?.id || null
+        authUser?.id || null,
       );
 
       if (replay) {
@@ -2003,9 +1989,10 @@ salesRoute.post("/", async (c) => {
     if (error instanceof Error && error.message === "Not enough stock for concurrent sale") {
       return c.json(
         {
-          message: "Stock changed while this sale was being saved. Refresh the product and try again."
+          message:
+            "Stock changed while this sale was being saved. Refresh the product and try again.",
         },
-        409
+        409,
       );
     }
 
@@ -2014,7 +2001,7 @@ salesRoute.post("/", async (c) => {
 
   const fullSale = await prisma.sale.findUnique({
     where: { id: result.sale.id },
-    include: saleResponseInclude
+    include: saleResponseInclude,
   });
 
   if (!fullSale) {
@@ -2029,7 +2016,7 @@ salesRoute.post("/", async (c) => {
   result = {
     ...result,
     sale: pricedFullSale,
-    items: pricedFullSale.items
+    items: pricedFullSale.items,
   };
 
   await writeAudit(c, {
@@ -2039,8 +2026,8 @@ salesRoute.post("/", async (c) => {
     metadata: {
       total,
       paidAmount,
-      invoiceNo: parsed.data.invoiceNo || null
-    }
+      invoiceNo: parsed.data.invoiceNo || null,
+    },
   });
 
   return c.json({ data: result }, 201);
