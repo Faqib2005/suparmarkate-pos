@@ -225,8 +225,8 @@ export function AccountingPage({ apiBaseUrl }: AccountingPageProps) {
                       <TableHead>کد</TableHead>
                       <TableHead>حساب</TableHead>
                       <TableHead>نوع</TableHead>
-                      <TableHead>Debit</TableHead>
-                      <TableHead>Credit</TableHead>
+                      <TableHead>بدهکار</TableHead>
+                      <TableHead>بستانکار</TableHead>
                       <TableHead>مانده</TableHead>
                       <TableHead>عملیات</TableHead>
                     </TableRow>
@@ -327,8 +327,8 @@ export function AccountingPage({ apiBaseUrl }: AccountingPageProps) {
                       <TableHead>نوع</TableHead>
                       <TableHead>شرح</TableHead>
                       <TableHead>خطوط سند</TableHead>
-                      <TableHead>Debit</TableHead>
-                      <TableHead>Credit</TableHead>
+                      <TableHead>بدهکار</TableHead>
+                      <TableHead>بستانکار</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -495,8 +495,8 @@ function PartyBalanceTable({
                 <TableHead>نام</TableHead>
                 <TableHead>شماره</TableHead>
                 <TableHead>نوع</TableHead>
-                <TableHead>Debit</TableHead>
-                <TableHead>Credit</TableHead>
+                <TableHead>بدهکار</TableHead>
+                <TableHead>بستانکار</TableHead>
                 <TableHead>مانده</TableHead>
                 <TableHead>عملیات</TableHead>
               </TableRow>

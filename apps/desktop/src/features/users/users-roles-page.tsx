@@ -141,7 +141,7 @@ function permissionLabel(key: string) {
     "reports.view": "دیدن گزارشات",
     "users.manage": "کاربران و صلاحیت‌ها",
     "settings.manage": "تنظیمات",
-    "backup.manage": "بکاپ و Restore",
+    "backup.manage": "بکاپ و بازگردانی",
     "employees.view": "دیدن کارمندان",
     "employees.manage": "مدیریت کارمندان",
     "attendance.view": "دیدن حاضری",

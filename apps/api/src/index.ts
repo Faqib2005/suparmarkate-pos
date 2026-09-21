@@ -66,6 +66,8 @@ import { systemHealthRoute } from "./modules/system-health/routes";
 import { ensureRuntimeServerConfigFile } from "./lib/runtime-server-config";
 import { startSystemHealthWebSocketServer } from "./lib/system-health-realtime";
 import { BUSINESS_TIME_ZONE, kabulDateKey } from "./lib/kabul-date";
+import { customerErrorMiddleware } from "./lib/customer-error-middleware";
+import { customerMessage } from "./lib/customer-message";
 
 const app = new Hono();
 const webDistDir =
@@ -139,6 +141,7 @@ app.use(
   })
 );
 
+app.use("/api/*", customerErrorMiddleware);
 app.use("/uploads/products/*", serveStatic({ root: "./" }));
 app.use("/uploads/receipts/*", serveStatic({ root: "./" }));
 app.use("*", slowRequestMiddleware);
@@ -278,7 +281,7 @@ app.onError((error, c) => {
     const status = response.status || error.status || 500;
     return c.json(
       {
-        message: error.message || response.statusText || "درخواست انجام نشد"
+        message: customerMessage(error.message || response.statusText || "درخواست انجام نشد")
       },
       status as 400
     );
@@ -293,7 +296,7 @@ app.onError((error, c) => {
     {
       message:
         prismaMessage ||
-        (status < 500 ? publicErrorMessage(error) : "Internal server error")
+        customerMessage(status < 500 ? publicErrorMessage(error) : "Internal server error")
     },
     status as 400
   );

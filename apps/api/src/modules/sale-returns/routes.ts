@@ -28,6 +28,7 @@ import {
 import { inventoryOperationEvidence } from "../../lib/request-evidence";
 import { kabulNow } from "../../lib/kabul-date";
 import { stockDecimal } from "../../lib/stock-quantity";
+import { createSaleExchange, saleExchangeSchema } from "./exchange-service";
 
 export const saleReturnsRoute = new Hono();
 
@@ -99,6 +100,7 @@ saleReturnsRoute.get("/", async (c) => {
       sale: true,
       customer: true,
       currency: true,
+      exchange: { select: { exchangeNo: true } },
       createdByUser: true,
       posDevice: true,
       items: {
@@ -222,6 +224,40 @@ saleReturnsRoute.get("/quality", async (c) => {
     },
     remediation: "REVIEW_AND_CANCEL_RECREATE",
   });
+});
+
+saleReturnsRoute.post("/exchange", async (c) => {
+  const authUser = getAuthUser(c);
+  const body = await c.req.json().catch(() => null);
+  const parsed = saleExchangeSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return c.json(zodError(parsed.error), 400);
+  }
+
+  const posDevice = await getRequestPosDevice(c, authUser?.id || null);
+  const result = await createSaleExchange({
+    data: parsed.data,
+    actor: authUser ?? { id: null },
+    posDevice,
+    evidence: inventoryOperationEvidence(c),
+  });
+
+  if (!result.idempotentReplay) {
+    await writeAudit(c, {
+      action: "SALE_EXCHANGE_CREATED",
+      entityType: "SaleExchange",
+      entityId: result.exchange.id,
+      metadata: {
+        sourceSaleId: parsed.data.saleId,
+        saleReturnId: result.saleReturn.id,
+        replacementSaleId: result.replacementSale.id,
+        exchangeNo: result.exchange.exchangeNo,
+      },
+    });
+  }
+
+  return c.json({ data: result, idempotentReplay: result.idempotentReplay }, result.idempotentReplay ? 200 : 201);
 });
 
 saleReturnsRoute.post("/", async (c) => {
@@ -752,11 +788,22 @@ saleReturnsRoute.post("/:id/cancel", async (c) => {
 
   const saleReturn = await prisma.saleReturn.findUnique({
     where: { id },
-    include: { items: true }
+    include: {
+      items: true,
+      exchange: { select: { exchangeNo: true } },
+    }
   });
 
   if (!saleReturn) return c.json({ message: "Sale return not found" }, 404);
   if (saleReturn.cancelledAt) return c.json({ message: "Sale return is already cancelled" }, 400);
+  if (saleReturn.exchange) {
+    return c.json(
+      {
+        message: `این برگشت بخشی از تعویض ${saleReturn.exchange.exchangeNo} است و ابطال جداگانه آن مجاز نیست.`,
+      },
+      409,
+    );
+  }
 
   const moneyTransactions = await prisma.moneyTransaction.findMany({
     where: { referenceType: "SALE_RETURN", referenceId: id }
@@ -770,10 +817,18 @@ saleReturnsRoute.post("/:id/cancel", async (c) => {
       await acquireTransactionLock(tx, "sale-return-document", id);
       const currentReturn = await tx.saleReturn.findUnique({
         where: { id },
-        include: { items: { include: { lot: true } } }
+        include: {
+          items: { include: { lot: true } },
+          exchange: { select: { exchangeNo: true } },
+        }
       });
       if (!currentReturn || currentReturn.cancelledAt) {
         throw new Error("این برگشت فروش قبلاً ابطال شده است.");
+      }
+      if (currentReturn.exchange) {
+        throw new Error(
+          `این برگشت بخشی از تعویض ${currentReturn.exchange.exchangeNo} است و ابطال جداگانه آن مجاز نیست.`,
+        );
       }
       const inventory = new InventoryMutationService(tx);
       await inventory.lock(

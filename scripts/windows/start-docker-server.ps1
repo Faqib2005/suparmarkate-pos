@@ -17,6 +17,7 @@ param(
   [int]$RedisPort = 6379,
   [string]$BackupDir = "",
   [string]$LanIp = "",
+  [switch]$UpdateLanIp,
   [switch]$ReuseImage,
   [switch]$ConfirmStableIp,
   [switch]$ConfirmUps,
@@ -380,6 +381,12 @@ BACKUP_SECOND_DISK_CONFIRMED=$($ConfirmSeparateBackupDisk.IsPresent.ToString().T
   if ($storedLanIp -ne $lanIp) {
     Write-Warning "SERVER IP CHANGED: stored=$storedLanIp current=$lanIp"
     Write-Warning "Desktop and mobile clients may still point to the old IP. Configure a DHCP reservation/static IP before reopening the store."
+    if ($UpdateLanIp) {
+      Set-EnvFileValue $composeEnvPath "MUHASEB_SERVER_LAN_IP" $lanIp
+      Set-EnvFileValue $composeEnvPath "LAN_API_BASE_URL" $lanApiBaseUrl
+      Set-EnvFileValue $composeEnvPath "PUBLIC_API_BASE_URL" $lanApiBaseUrl
+      Write-Host "Updated the stored Muhaseb LAN IP and public API URLs."
+    }
   }
   if ($composeEnvContent -notmatch "(?m)^LAN_API_BASE_URL=") {
     Add-Content -Path $composeEnvPath -Value "LAN_API_BASE_URL=$lanApiBaseUrl"

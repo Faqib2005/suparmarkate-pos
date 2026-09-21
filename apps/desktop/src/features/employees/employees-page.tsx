@@ -1343,7 +1343,7 @@ function EmployeeDialog({
                   <Field label="رمز اولیه" value={form.password} type="password" onChange={(value) => onChange("password", value)} />
                 ) : null}
                 <label className="grid gap-1.5 text-sm">
-                  <span className="text-muted-foreground">Role</span>
+                  <span className="text-muted-foreground">نقش کاربری</span>
                   <Combobox options={roles} value={form.roleId} onValueChange={(value) => onChange("roleId", value)} placeholder="انتخاب صلاحیت" />
                 </label>
               </div>

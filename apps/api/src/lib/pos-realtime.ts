@@ -3,6 +3,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { prisma } from "./prisma";
 import { normalizeBarcodeText } from "./barcode";
 import { findProductIdsByBarcode } from "./product-barcode-lookup";
+import { customerMessage } from "./customer-message";
 
 const MIN_CART_QUANTITY = 0.0001;
 
@@ -1020,7 +1021,7 @@ export function startPosWebSocketServer(port = 4001) {
       socket.send(
         safeJson({
           type: "CONNECTION_ERROR",
-          payload: { message: "sessionId is required" }
+          payload: { message: "شناسه نشست صندوق فروش ضروری است." }
         })
       );
       socket.close();
@@ -1178,9 +1179,11 @@ export function startPosWebSocketServer(port = 4001) {
 
         sendToClient(client, "UNKNOWN_MESSAGE", { message });
       } catch (error) {
+        const message = customerMessage(
+          error instanceof Error ? error.message : "عملیات POS ناکام شد"
+        );
         sendToClient(client, "MESSAGE_ERROR", {
-          message: error instanceof Error ? error.message : "عملیات POS ناکام شد",
-          error: error instanceof Error ? error.message : String(error)
+          message
         });
       }
     });

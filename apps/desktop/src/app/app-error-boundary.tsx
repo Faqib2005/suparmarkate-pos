@@ -20,9 +20,10 @@ export class AppErrorBoundary extends Component<Props, State> {
   };
 
   static getDerivedStateFromError(error: Error): State {
+    void error;
     return {
       hasError: true,
-      message: error.message || "خطای نامعلوم",
+      message: "خطای غیرمنتظره‌ای در بارگذاری صفحه رخ داد. لطفاً صفحه را دوباره بارگذاری کنید.",
     };
   }
 
@@ -53,7 +54,7 @@ export class AppErrorBoundary extends Component<Props, State> {
               برنامه با خطا روبه‌رو شد، اما کل اپ بسته نشد. صفحه را تازه‌سازی کنید.
             </p>
 
-            <pre className="max-h-44 overflow-auto rounded-xl bg-secondary p-3 text-left text-xs" dir="ltr">
+            <pre className="max-h-44 overflow-auto rounded-xl bg-secondary p-3 text-right text-xs" dir="rtl">
               {this.state.message}
             </pre>
 

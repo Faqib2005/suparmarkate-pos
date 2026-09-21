@@ -26,7 +26,7 @@ export function PosReadinessCard({ issues, isWsConnected }: PosReadinessCardProp
 
       <CardContent className="space-y-3">
         <div className="flex items-center justify-between rounded-xl bg-secondary p-3 text-sm">
-          <span className="text-muted-foreground">WebSocket</span>
+          <span className="text-muted-foreground">اتصال زنده</span>
           <Badge variant={isWsConnected ? "default" : "secondary"}>
             {isWsConnected ? "وصل" : "قطع"}
           </Badge>

@@ -53,7 +53,7 @@ export function PosDataQualityDialog({
       setTotal(Number(json?.summary?.saleUnitIssues || 0));
     } catch (error) {
       if ((error as Error)?.name !== "AbortError") {
-        toast.error(error instanceof Error ? error.message : "خواندن گزارش POS ناکام شد");
+        toast.error(error instanceof Error ? error.message : "خواندن گزارش صندوق فروش ناکام شد");
       }
     } finally {
       if (requestRef.current === controller) {

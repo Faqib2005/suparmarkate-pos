@@ -207,6 +207,15 @@ async function cleanupFixture(fixture: Fixture) {
         where: { id: { in: inventoryOperationIds } }
       });
     }
+    await prisma.saleExchange.deleteMany({
+      where: {
+        OR: [
+          { sourceSaleId: { in: saleIds } },
+          { replacementSaleId: { in: saleIds } },
+          { saleReturnId: { in: saleReturnIds } },
+        ],
+      },
+    });
     await prisma.saleReturn.deleteMany({ where: { id: { in: saleReturnIds } } });
     await prisma.sale.deleteMany({ where: { id: { in: saleIds } } });
   }
@@ -259,6 +268,415 @@ afterAll(async () => {
 });
 
 describe("atomic POS sale", () => {
+  it("records a sale return and replacement sale as one atomic exchange", async () => {
+    const fixture = await createFixture("sale-exchange");
+    const sourceRequestId = `atomic-${Date.now()}-exchange-source`;
+    const exchangeRequestId = `atomic-${Date.now()}-exchange-document`;
+    fixture.clientRequestIds.push(sourceRequestId, exchangeRequestId);
+    const customer = await prisma.party.create({
+      data: {
+        type: "CUSTOMER",
+        name: `Exchange customer ${Date.now()}`,
+        code: `EX-${Date.now()}`,
+      },
+    });
+    fixture.partyIds.push(customer.id);
+
+    const sourceResponse = await saleRequest(fixture, sourceRequestId, {
+      customerId: customer.id,
+      paidAmount: 120,
+    });
+    expect(sourceResponse.status).toBe(201);
+    const sourcePayload = (await sourceResponse.json()) as any;
+    const sourceSaleId = sourcePayload.data.sale.id as string;
+    const sourceSale = await prisma.sale.findUniqueOrThrow({
+      where: { id: sourceSaleId },
+      include: { items: { orderBy: { quantity: "desc" } } },
+    });
+    const returnItem = sourceSale.items.find((item) => Number(item.quantity) >= 2);
+    expect(returnItem).toBeTruthy();
+
+    const exchangeBody = {
+      clientRequestId: exchangeRequestId,
+      saleId: sourceSale.id,
+      refundAmount: 0,
+      note: "Atomic exchange integration test",
+      returnItems: [{ saleItemId: returnItem!.id, quantity: 2 }],
+      replacement: {
+        paidAmount: 20,
+        paymentAccountType: "CASH",
+        paymentAccountId: fixture.cashAccountId,
+        items: [
+          {
+            productId: fixture.productId,
+            warehouseId,
+            unitId,
+            quantity: 3,
+            unitPrice: 20,
+            discount: 0,
+          },
+        ],
+      },
+    };
+
+    const response = await adminReturnsApp.request("http://localhost/exchange", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(exchangeBody),
+    });
+    expect(response.status).toBe(201);
+    const payload = (await response.json()) as any;
+    const replacementSaleId = payload.data.replacementSale.id as string;
+    const saleReturnId = payload.data.saleReturn.id as string;
+
+    const [exchange, replacementSale, saleReturn, lots, partyAccount, journals, cash] =
+      await Promise.all([
+        prisma.saleExchange.findFirstOrThrow({ where: { replacementSaleId } }),
+        prisma.sale.findUniqueOrThrow({ where: { id: replacementSaleId }, include: { items: true } }),
+        prisma.saleReturn.findUniqueOrThrow({ where: { id: saleReturnId }, include: { items: true } }),
+        prisma.stockLot.findMany({
+          where: { id: { in: fixture.lotIds } },
+          orderBy: { unitCost: "asc" },
+        }),
+        prisma.partyAccount.findUniqueOrThrow({
+          where: { partyId_currencyId: { partyId: customer.id, currencyId: fixture.saleCurrencyId } },
+        }),
+        prisma.journalEntry.findMany({
+          where: { sourceId: { in: [saleReturnId, replacementSaleId] } },
+          include: { lines: true },
+        }),
+        prisma.cashRegisterAccount.findUniqueOrThrow({ where: { id: fixture.cashAccountId } }),
+      ]);
+
+    expect(exchange.sourceSaleId).toBe(sourceSaleId);
+    expect(exchange.saleReturnId).toBe(saleReturnId);
+    expect(Number(saleReturn.subtotal)).toBe(40);
+    expect(Number(replacementSale.total)).toBe(60);
+    expect(Number(replacementSale.paidAmount)).toBe(60);
+    expect(Number(replacementSale.remainingAmount)).toBe(0);
+    expect(Number(exchange.cashPaidAmount)).toBe(20);
+    expect(Number(exchange.creditApplied)).toBe(40);
+    expect(Number(exchange.outstandingAmount)).toBe(0);
+    expect(replacementSale.items.reduce((sum, item) => sum + Number(item.quantity), 0)).toBe(3);
+    expect(lots.map((lot) => Number(lot.remainingQuantity))).toEqual([0, 2]);
+    expect(Number(partyAccount.debitBalance)).toBe(40);
+    expect(Number(partyAccount.creditBalance)).toBe(40);
+    expect(Number(cash.balance)).toBe(140);
+    expect(journals).toHaveLength(3);
+    expect(
+      journals.every(
+        (journal) =>
+          journal.lines.reduce((sum, line) => sum + Number(line.baseDebit), 0) ===
+          journal.lines.reduce((sum, line) => sum + Number(line.baseCredit), 0),
+      ),
+    ).toBe(true);
+
+    const [sourceReceiptTokenResponse, replacementReceiptTokenResponse] = await Promise.all([
+      posReceiptsRoute.request(`http://localhost/sales/${sourceSaleId}/token`, { method: "POST" }),
+      posReceiptsRoute.request(`http://localhost/sales/${replacementSaleId}/token`, { method: "POST" }),
+    ]);
+    const [sourceReceiptToken, replacementReceiptToken] = await Promise.all([
+      sourceReceiptTokenResponse.json() as Promise<any>,
+      replacementReceiptTokenResponse.json() as Promise<any>,
+    ]);
+    const [sourceReceiptResponse, replacementReceiptResponse] = await Promise.all([
+      posReceiptsRoute.request(
+        `http://localhost/sales/${sourceSaleId}/html?accessToken=${encodeURIComponent(sourceReceiptToken.data.token)}`,
+      ),
+      posReceiptsRoute.request(
+        `http://localhost/sales/${replacementSaleId}/html?accessToken=${encodeURIComponent(replacementReceiptToken.data.token)}`,
+      ),
+    ]);
+    expect(sourceReceiptResponse.status).toBe(200);
+    expect(replacementReceiptResponse.status).toBe(200);
+    expect(await sourceReceiptResponse.text()).toContain("اقلام جدید در تعویض فروش");
+    expect(await replacementReceiptResponse.text()).toContain("اعتبار برگشتی استفاده‌شده");
+
+    const replay = await adminReturnsApp.request("http://localhost/exchange", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(exchangeBody),
+    });
+    expect(replay.status).toBe(200);
+    expect((await replay.json()) as any).toMatchObject({
+      idempotentReplay: true,
+      data: { replacementSale: { id: replacementSaleId } },
+    });
+    expect(await prisma.saleExchange.count({ where: { replacementSaleId } })).toBe(1);
+
+    const [returnCancellation, replacementCancellation] = await Promise.all([
+      adminReturnsApp.request(`http://localhost/${saleReturnId}/cancel`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: "Must not cancel one side of an exchange" }),
+      }),
+      adminSalesApp.request(`http://localhost/${replacementSaleId}/cancel`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: "Must not cancel one side of an exchange" }),
+      }),
+    ]);
+    expect(returnCancellation.status).toBe(409);
+    expect(replacementCancellation.status).toBe(409);
+  });
+
+  it("uses the system cash customer when exchanging a cash sale", async () => {
+    const fixture = await createFixture("cash-sale-exchange");
+    const sourceRequestId = `atomic-${Date.now()}-cash-exchange-source`;
+    const exchangeRequestId = `atomic-${Date.now()}-cash-exchange-document`;
+    fixture.clientRequestIds.push(sourceRequestId, exchangeRequestId);
+
+    const sourceResponse = await saleRequest(fixture, sourceRequestId, { paidAmount: 120 });
+    expect(sourceResponse.status).toBe(201);
+    const sourceSaleId = ((await sourceResponse.json()) as any).data.sale.id as string;
+    const sourceSale = await prisma.sale.findUniqueOrThrow({
+      where: { id: sourceSaleId },
+      include: { items: true },
+    });
+    expect(sourceSale.customerId).toBeNull();
+    const returnItem = sourceSale.items.find((item) => Number(item.quantity) >= 2)!;
+
+    const response = await adminReturnsApp.request("http://localhost/exchange", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        clientRequestId: exchangeRequestId,
+        saleId: sourceSaleId,
+        refundAmount: 0,
+        returnItems: [{ saleItemId: returnItem.id, quantity: 2 }],
+        replacement: {
+          paidAmount: 0,
+          items: [{
+            productId: fixture.productId,
+            warehouseId,
+            unitId,
+            quantity: 1,
+            unitPrice: 20,
+            discount: 0,
+          }],
+        },
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const payload = (await response.json()) as any;
+    const [replacementSale, saleReturn, cashCustomer] = await Promise.all([
+      prisma.sale.findUniqueOrThrow({ where: { id: payload.data.replacementSale.id } }),
+      prisma.saleReturn.findUniqueOrThrow({ where: { id: payload.data.saleReturn.id } }),
+      prisma.party.findFirstOrThrow({ where: { code: "SYSTEM-CASH-CUSTOMER", deletedAt: null } }),
+    ]);
+
+    expect(cashCustomer.name).toBe("مشتری نقدی");
+    expect(replacementSale.customerId).toBe(cashCustomer.id);
+    expect(saleReturn.customerId).toBe(cashCustomer.id);
+  });
+
+  it("keeps unused return credit on the customer account", async () => {
+    const fixture = await createFixture("sale-exchange-credit");
+    const sourceRequestId = `atomic-${Date.now()}-exchange-credit-source`;
+    const exchangeRequestId = `atomic-${Date.now()}-exchange-credit-document`;
+    fixture.clientRequestIds.push(sourceRequestId, exchangeRequestId);
+    const customer = await prisma.party.create({
+      data: {
+        type: "CUSTOMER",
+        name: `Exchange credit customer ${Date.now()}`,
+        code: `EC-${Date.now()}`,
+      },
+    });
+    fixture.partyIds.push(customer.id);
+
+    const sourceResponse = await saleRequest(fixture, sourceRequestId, {
+      customerId: customer.id,
+      paidAmount: 120,
+    });
+    const sourceSaleId = ((await sourceResponse.json()) as any).data.sale.id as string;
+    const sourceSale = await prisma.sale.findUniqueOrThrow({
+      where: { id: sourceSaleId },
+      include: { items: true },
+    });
+    const returnItem = sourceSale.items.find((item) => Number(item.quantity) >= 2)!;
+
+    const response = await adminReturnsApp.request("http://localhost/exchange", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        clientRequestId: exchangeRequestId,
+        saleId: sourceSaleId,
+        customerId: customer.id,
+        refundAmount: 0,
+        returnItems: [{ saleItemId: returnItem.id, quantity: 2 }],
+        replacement: {
+          paidAmount: 0,
+          items: [{
+            productId: fixture.productId,
+            warehouseId,
+            unitId,
+            quantity: 1,
+            unitPrice: 20,
+            discount: 0,
+          }],
+        },
+      }),
+    });
+    expect(response.status).toBe(201);
+    const replacementSaleId = ((await response.json()) as any).data.replacementSale.id as string;
+    const [exchange, replacementSale, partyAccount] = await Promise.all([
+      prisma.saleExchange.findFirstOrThrow({ where: { replacementSaleId } }),
+      prisma.sale.findUniqueOrThrow({ where: { id: replacementSaleId } }),
+      prisma.partyAccount.findUniqueOrThrow({
+        where: { partyId_currencyId: { partyId: customer.id, currencyId: fixture.saleCurrencyId } },
+      }),
+    ]);
+
+    expect(Number(exchange.cashPaidAmount)).toBe(0);
+    expect(Number(exchange.creditApplied)).toBe(20);
+    expect(Number(exchange.outstandingAmount)).toBe(0);
+    expect(Number(replacementSale.paidAmount)).toBe(20);
+    expect(Number(replacementSale.remainingAmount)).toBe(0);
+    expect(Number(partyAccount.debitBalance)).toBe(20);
+    expect(Number(partyAccount.creditBalance)).toBe(40);
+  });
+
+  it("records only the unpaid exchange remainder as a new receivable", async () => {
+    const fixture = await createFixture("sale-exchange-receivable");
+    const sourceRequestId = `atomic-${Date.now()}-exchange-receivable-source`;
+    const exchangeRequestId = `atomic-${Date.now()}-exchange-receivable-document`;
+    fixture.clientRequestIds.push(sourceRequestId, exchangeRequestId);
+    const customer = await prisma.party.create({
+      data: {
+        type: "CUSTOMER",
+        name: `Exchange receivable customer ${Date.now()}`,
+        code: `ER-${Date.now()}`,
+      },
+    });
+    fixture.partyIds.push(customer.id);
+
+    const sourceResponse = await saleRequest(fixture, sourceRequestId, {
+      customerId: customer.id,
+      paidAmount: 120,
+    });
+    const sourceSaleId = ((await sourceResponse.json()) as any).data.sale.id as string;
+    const sourceSale = await prisma.sale.findUniqueOrThrow({
+      where: { id: sourceSaleId },
+      include: { items: true },
+    });
+    const returnItem = sourceSale.items.find((item) => Number(item.quantity) >= 2)!;
+
+    const response = await adminReturnsApp.request("http://localhost/exchange", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        clientRequestId: exchangeRequestId,
+        saleId: sourceSaleId,
+        customerId: customer.id,
+        refundAmount: 0,
+        returnItems: [{ saleItemId: returnItem.id, quantity: 2 }],
+        replacement: {
+          paidAmount: 5,
+          paymentAccountType: "CASH",
+          paymentAccountId: fixture.cashAccountId,
+          items: [{
+            productId: fixture.productId,
+            warehouseId,
+            unitId,
+            quantity: 3,
+            unitPrice: 20,
+            discount: 0,
+          }],
+        },
+      }),
+    });
+    expect(response.status).toBe(201);
+    const replacementSaleId = ((await response.json()) as any).data.replacementSale.id as string;
+    const [exchange, replacementSale, partyAccount] = await Promise.all([
+      prisma.saleExchange.findFirstOrThrow({ where: { replacementSaleId } }),
+      prisma.sale.findUniqueOrThrow({ where: { id: replacementSaleId } }),
+      prisma.partyAccount.findUniqueOrThrow({
+        where: { partyId_currencyId: { partyId: customer.id, currencyId: fixture.saleCurrencyId } },
+      }),
+    ]);
+
+    expect(Number(exchange.cashPaidAmount)).toBe(5);
+    expect(Number(exchange.creditApplied)).toBe(40);
+    expect(Number(exchange.outstandingAmount)).toBe(15);
+    expect(Number(replacementSale.paidAmount)).toBe(45);
+    expect(Number(replacementSale.remainingAmount)).toBe(15);
+    expect(Number(partyAccount.debitBalance)).toBe(55);
+    expect(Number(partyAccount.creditBalance)).toBe(40);
+  });
+
+  it("rolls back the entire exchange when the replacement item has insufficient stock", async () => {
+    const fixture = await createFixture("sale-exchange-rollback");
+    const sourceRequestId = `atomic-${Date.now()}-exchange-rollback-source`;
+    const exchangeRequestId = `atomic-${Date.now()}-exchange-rollback-document`;
+    fixture.clientRequestIds.push(sourceRequestId, exchangeRequestId);
+    const customer = await prisma.party.create({
+      data: {
+        type: "CUSTOMER",
+        name: `Exchange rollback customer ${Date.now()}`,
+        code: `ER-${Date.now()}`,
+      },
+    });
+    fixture.partyIds.push(customer.id);
+
+    const sourceResponse = await saleRequest(fixture, sourceRequestId, {
+      customerId: customer.id,
+      paidAmount: 120,
+    });
+    expect(sourceResponse.status).toBe(201);
+    const sourceSaleId = ((await sourceResponse.json()) as any).data.sale.id as string;
+    const sourceSale = await prisma.sale.findUniqueOrThrow({
+      where: { id: sourceSaleId },
+      include: { items: true },
+    });
+    const returnItem = sourceSale.items.find((item) => Number(item.quantity) >= 1)!;
+    const beforeLots = await prisma.stockLot.findMany({
+      where: { id: { in: fixture.lotIds } },
+      orderBy: { unitCost: "asc" },
+    });
+    const beforeReturnCount = await prisma.saleReturn.count({ where: { saleId: sourceSaleId } });
+
+    const response = await adminReturnsApp.request("http://localhost/exchange", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        clientRequestId: exchangeRequestId,
+        saleId: sourceSaleId,
+        customerId: customer.id,
+        refundAmount: 0,
+        returnItems: [{ saleItemId: returnItem.id, quantity: 1 }],
+        replacement: {
+          paidAmount: 0,
+          items: [
+            {
+              productId: fixture.productId,
+              warehouseId,
+              unitId,
+              quantity: 999,
+              unitPrice: 20,
+              discount: 0,
+            },
+          ],
+        },
+      }),
+    });
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    const [afterLots, afterReturnCount, replacementCount] = await Promise.all([
+      prisma.stockLot.findMany({
+        where: { id: { in: fixture.lotIds } },
+        orderBy: { unitCost: "asc" },
+      }),
+      prisma.saleReturn.count({ where: { saleId: sourceSaleId } }),
+      prisma.sale.count({ where: { clientRequestId: exchangeRequestId } }),
+    ]);
+    expect(afterLots.map((lot) => Number(lot.remainingQuantity))).toEqual(
+      beforeLots.map((lot) => Number(lot.remainingQuantity)),
+    );
+    expect(afterReturnCount).toBe(beforeReturnCount);
+    expect(replacementCount).toBe(0);
+  });
+
   it("splits an 18-unit POS sale across FIFO lots and keeps one receipt quantity", async () => {
     const fixture = await createFixture("fifo-5-10-20", baseCurrencyId, [5, 10, 20]);
     const clientRequestId = `atomic-${Date.now()}-fifo-18`;
@@ -545,6 +963,20 @@ describe("atomic POS sale", () => {
     ).toBe(100);
     expect(saleJournal.lines.reduce((sum, line) => sum + Number(line.baseDebit), 0)).toBe(120);
     expect(saleJournal.lines.reduce((sum, line) => sum + Number(line.baseCredit), 0)).toBe(120);
+
+    const receiptTokenResponse = await posReceiptsRoute.request(
+      `http://localhost/sales/${saleId}/token`,
+      { method: "POST" },
+    );
+    expect(receiptTokenResponse.status).toBe(200);
+    const receiptToken = (await receiptTokenResponse.json()) as any;
+    const receiptResponse = await posReceiptsRoute.request(
+      `http://localhost/sales/${saleId}/html?accessToken=${encodeURIComponent(receiptToken.data.token)}&width=80`,
+    );
+    expect(receiptResponse.status).toBe(200);
+    const receiptHtml = await receiptResponse.text();
+    expect(receiptHtml).toContain("مبلغ قرض مشتری:");
+    expect(receiptHtml).toContain("100 AFN");
   });
 
   it("snapshots a foreign-currency rate across split cash and bank payment", async () => {

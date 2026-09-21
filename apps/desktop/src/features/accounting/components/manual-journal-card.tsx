@@ -230,10 +230,10 @@ export function ManualJournalCard({
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-secondary p-3 text-sm">
           <div className="flex flex-wrap gap-4">
             <span>
-              Debit: <strong>{money(totals.debit, baseCurrencyCode)}</strong>
+              بدهکار: <strong>{money(totals.debit, baseCurrencyCode)}</strong>
             </span>
             <span>
-              Credit: <strong>{money(totals.credit, baseCurrencyCode)}</strong>
+              بستانکار: <strong>{money(totals.credit, baseCurrencyCode)}</strong>
             </span>
             <span>
               تفاوت:{" "}

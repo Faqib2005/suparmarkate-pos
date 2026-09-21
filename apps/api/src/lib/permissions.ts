@@ -257,10 +257,10 @@ export async function permissionMiddleware(c: Context, next: Next) {
   }
 
   if (!requirement) {
-    return c.json({ message: "Access policy is not configured for this route" }, 403);
+    return c.json({ message: "دسترسی این بخش در سیستم تنظیم نشده است." }, 403);
   }
 
   const permissions =
     requirement.type === "permissions" ? requirement.anyOf.join(" or ") : "login";
-  return c.json({ message: `Permission required: ${permissions}` }, 403);
+  return c.json({ message: "شما اجازه لازم برای انجام این کار را ندارید." }, 403);
 }

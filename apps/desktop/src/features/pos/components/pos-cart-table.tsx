@@ -218,7 +218,7 @@ export function PosCartTable({
                             variant="secondary"
                             onClick={() =>
                               onUpdateItem(item.key, {
-                                quantity: normalizePosQuantity(Number(item.quantity) - 0.1),
+                                quantity: normalizePosQuantity(Number(item.quantity) - 1),
                               })
                             }
                           >

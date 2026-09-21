@@ -52,6 +52,10 @@ services:
       PORT: 4000
       POS_WS_PORT: 4001
       SYSTEM_HEALTH_WS_PORT: 4002
+      # The Web app and mobile QR connect from outside Docker. These ports can
+      # differ from the internal container ports when a second server is installed.
+      PUBLIC_POS_WS_PORT: ${HOST_POS_WS_PORT:-4001}
+      PUBLIC_SYSTEM_HEALTH_WS_PORT: ${HOST_SYSTEM_HEALTH_WS_PORT:-4002}
       BUSINESS_TIME_ZONE: Asia/Kabul
       WEB_APP_ENABLED: ${WEB_APP_ENABLED:-true}
       WEB_DIST_DIR: /app/apps/desktop/dist

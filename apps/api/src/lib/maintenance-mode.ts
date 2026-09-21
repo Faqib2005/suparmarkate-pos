@@ -12,7 +12,7 @@ export function getMaintenanceMode() {
 
 export const maintenanceModeMiddleware: MiddlewareHandler = async (c, next) => {
   if (reason && c.req.method !== "OPTIONS") {
-    return c.json({ message: `Server is in maintenance mode: ${reason}` }, 503);
+    return c.json({ message: `سرور در حالت نگهداری است: ${reason}` }, 503);
   }
 
   await next();

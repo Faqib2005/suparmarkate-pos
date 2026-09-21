@@ -2,6 +2,7 @@ import { Hono } from "hono";
 
 export const posCartRoute = new Hono();
 const posWebSocketPort = process.env.POS_WS_PORT || "4001";
+const publicPosWebSocketPort = process.env.PUBLIC_POS_WS_PORT || posWebSocketPort;
 
 function getConfiguredPublicBaseUrl() {
   const configured = process.env.PUBLIC_API_BASE_URL || process.env.LAN_API_BASE_URL;
@@ -23,7 +24,7 @@ function getUrls(c: any, sessionId: string) {
 
   return {
     apiBaseUrl,
-    desktopWebSocketUrl: `${wsProtocol}://${hostname}:${posWebSocketPort}?sessionId=${sessionId}&clientType=desktop`,
+    desktopWebSocketUrl: `${wsProtocol}://${hostname}:${publicPosWebSocketPort}?sessionId=${sessionId}&clientType=desktop`,
     mobileConnectPageUrl: `${apiBaseUrl}/api/pos/sessions/${sessionId}/connect`,
     mobileScanHttpUrl: `${apiBaseUrl}/api/pos/scan`
   };
@@ -373,7 +374,7 @@ posCartRoute.get("/sessions/:id", (c) => {
       const data = await res.json().catch(() => null);
 
       if (!res.ok) {
-        throw new Error(data?.message || data?.error?.message || "Request failed");
+        throw new Error(data?.message || data?.error?.message || "درخواست انجام نشد. لطفاً دوباره کوشش کنید.");
       }
 
       return data;
@@ -452,7 +453,7 @@ posCartRoute.get("/sessions/:id", (c) => {
         }
 
         if (message.type === "SCAN_ERROR") {
-          setStatus("خطا: " + (message.payload?.message || "Scan error"));
+          setStatus("خطا: " + (message.payload?.message || "اسکن بارکود ناکام شد"));
         }
       });
 

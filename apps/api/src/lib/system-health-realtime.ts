@@ -42,7 +42,7 @@ export function startSystemHealthWebSocketServer(port = 4002) {
     const requestUrl = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
     const token = requestUrl.searchParams.get("token") || "";
     if (!(await authorize(token))) {
-      send(socket, "CONNECTION_ERROR", { message: "Authentication required" });
+      send(socket, "CONNECTION_ERROR", { message: "برای اتصال باید وارد حساب شوید." });
       socket.close(1008, "Authentication required");
       return;
     }
@@ -53,7 +53,7 @@ export function startSystemHealthWebSocketServer(port = 4002) {
         send(socket, "RESOURCE_SNAPSHOT", await getServerResourceHealth());
       } catch (error) {
         send(socket, "RESOURCE_ERROR", {
-          message: error instanceof Error ? error.message : "Resource sampling failed"
+          message: "خواندن وضعیت منابع سرور ناکام شد."
         });
       }
     };

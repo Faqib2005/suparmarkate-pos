@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import bwipjs from "bwip-js";
 import { prisma } from "../../lib/prisma";
 import { PartyTransactionType } from "../../generated/prisma/enums";
 import { issueReceiptAccess, requireReceiptAccess } from "../../lib/receipt-access";
@@ -29,6 +30,23 @@ function formatDate(value: Date | string) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+function receiptBarcodeSvg(reference: string) {
+  try {
+    return bwipjs.toSVG({
+      bcid: "code128",
+      text: reference,
+      scale: 1,
+      height: 9,
+      includetext: false,
+      paddingwidth: 0,
+      paddingheight: 0,
+    });
+  } catch {
+    // A malformed legacy reference must never prevent rendering its receipt.
+    return "";
+  }
 }
 
 async function getSetting() {
@@ -200,6 +218,28 @@ function receiptCss() {
       font-size: 11px;
     }
 
+    .receipt-barcode {
+      margin-top: 8px;
+      border-top: 1px dashed #000;
+      padding-top: 5px;
+      text-align: center;
+    }
+
+    .receipt-barcode svg {
+      display: block;
+      width: 100%;
+      height: 38px;
+      margin: 0 auto;
+    }
+
+    .receipt-barcode-label {
+      direction: ltr;
+      margin-top: 1px;
+      font-family: Tahoma, Arial, sans-serif;
+      font-size: 8px;
+      letter-spacing: 0;
+    }
+
     @media print {
       @page {
         size: 80mm auto;
@@ -284,10 +324,11 @@ receiptsRoute.get("/sales/:id/html", async (c) => {
   });
 
   if (!sale) {
-    return c.html("<h1>Sale not found</h1>", 404);
+    return c.html("<h1>فروش مورد نظر پیدا نشد</h1>", 404);
   }
 
   const currency = sale.currency.symbol || sale.currency.code;
+  const customerDebtAmount = Math.max(0, Number(sale.remainingAmount || 0));
 
   const rows = sale.items
     .map((item, index) => {
@@ -364,10 +405,16 @@ receiptsRoute.get("/sales/:id/html", async (c) => {
         <span>پرداخت شده</span>
         <span>${formatNumber(sale.paidAmount)} ${escapeHtml(currency)}</span>
       </div>
-      <div class="total-row">
-        <span>باقی</span>
-        <span>${formatNumber(sale.remainingAmount)} ${escapeHtml(currency)}</span>
+      ${
+        customerDebtAmount > 0
+          ? `
+      <div class="total-row grand-total">
+        <span>مبلغ قرض مشتری</span>
+        <span>${formatNumber(customerDebtAmount)} ${escapeHtml(currency)}</span>
       </div>
+      `
+          : ""
+      }
     </div>
 
     ${receiptFooter(setting)}
@@ -451,7 +498,7 @@ receiptsRoute.get("/party-payments/:id/html", async (c) => {
   });
 
   if (!partyTransaction) {
-    return c.html("<h1>Payment transaction not found</h1>", 404);
+    return c.html("<h1>تراکنش پرداخت مورد نظر پیدا نشد</h1>", 404);
   }
 
   const moneyTransaction = await prisma.moneyTransaction.findFirst({
@@ -482,6 +529,8 @@ receiptsRoute.get("/party-payments/:id/html", async (c) => {
   const title = isCustomerPayment
     ? "رسید دریافت پول از مشتری"
     : "رسید پرداخت پول به تامین‌کننده";
+  const receiptReference = partyTransaction.id;
+  const barcodeSvg = receiptBarcodeSvg(receiptReference);
 
   const accountName = moneyTransaction?.cashRegisterAccount
     ? `صندوق: ${moneyTransaction.cashRegisterAccount.cashRegister.name}`
@@ -494,7 +543,7 @@ receiptsRoute.get("/party-payments/:id/html", async (c) => {
 <html lang="fa" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <title>${escapeHtml(title)} ${escapeHtml(partyTransaction.id)}</title>
+  <title>${escapeHtml(title)} ${escapeHtml(receiptReference)}</title>
   <style>${receiptCss()}</style>
 </head>
 <body>
@@ -505,7 +554,7 @@ receiptsRoute.get("/party-payments/:id/html", async (c) => {
     <div class="title">${escapeHtml(title)}</div>
 
     <div class="meta">
-      <div>شماره رسید: ${escapeHtml(partyTransaction.id)}</div>
+      <div>شماره رسید: ${escapeHtml(receiptReference)}</div>
       <div>تاریخ: ${escapeHtml(formatDate(partyTransaction.createdAt))}</div>
       <div>نام: ${escapeHtml(partyTransaction.party.name)}</div>
       <div>شماره تماس: ${escapeHtml(partyTransaction.party.phone || "-")}</div>
@@ -516,6 +565,17 @@ receiptsRoute.get("/party-payments/:id/html", async (c) => {
     <div class="total-box">
       مبلغ: ${formatNumber(partyTransaction.amount)} ${escapeHtml(currency)}
     </div>
+
+    ${
+      barcodeSvg
+        ? `
+    <div class="receipt-barcode">
+      ${barcodeSvg}
+      <div class="receipt-barcode-label">${escapeHtml(receiptReference)}</div>
+    </div>
+    `
+        : ""
+    }
 
     ${receiptFooter(setting)}
   </div>

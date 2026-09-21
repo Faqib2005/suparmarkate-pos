@@ -211,8 +211,8 @@ export function AccountPeriodBalancesPage() {
       ]);
       const accountsJson = await accountsRes.json().catch(() => null);
       const partiesJson = await partiesRes.json().catch(() => null);
-      if (!accountsRes.ok) throw new Error("Accounts failed");
-      if (!partiesRes.ok) throw new Error("Parties failed");
+      if (!accountsRes.ok) throw new Error("خواندن حساب‌ها ناکام شد");
+      if (!partiesRes.ok) throw new Error("خواندن طرف حساب‌ها ناکام شد");
       setAccounts(accountsJson.data || []);
       setParties(partiesJson.data || []);
     } catch {
@@ -227,7 +227,7 @@ export function AccountPeriodBalancesPage() {
     page = 1,
   ) => {
     if (tab === "account" && !accountId) {
-      toast.warning("اول یک account را انتخاب کنید");
+      toast.warning("ابتدا یک حساب را انتخاب کنید");
       return;
     }
     if (tab === "party" && !partyId) {
@@ -255,7 +255,7 @@ export function AccountPeriodBalancesPage() {
 
       const res = await fetch(`${endpoint}?${params}`);
       const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.message || "Failed to load ledger");
+      if (!res.ok) throw new Error(json?.message || "خواندن دفتر کل ناکام شد");
       setReport(json.data);
     } catch (error) {
       toast.error(
@@ -294,7 +294,7 @@ export function AccountPeriodBalancesPage() {
 
         const res = await fetch(`${endpoint}?${params}`);
         const json = await res.json().catch(() => null);
-        if (!res.ok) throw new Error(json?.message || "Failed to prepare print");
+        if (!res.ok) throw new Error(json?.message || "آماده‌سازی چاپ ناکام شد");
 
         rows.push(...(json.data?.rows || []));
         totalPages = Number(json.data?.pagination?.totalPages || 1);
@@ -689,13 +689,13 @@ function LedgerTableMarkup({
         <TableRow className="bg-muted/40 hover:bg-muted/40 print:bg-white">
           <TableHead>تاریخ</TableHead>
           <TableHead>نمبر سند</TableHead>
-          <TableHead>Account</TableHead>
+          <TableHead>حساب</TableHead>
           <TableHead>طرف حساب</TableHead>
           <TableHead>نوع</TableHead>
           <TableHead>شرح</TableHead>
-          <TableHead>Debit</TableHead>
-          <TableHead>Credit</TableHead>
-          {showRunningBalance && <TableHead>Balance</TableHead>}
+          <TableHead>بدهکار</TableHead>
+          <TableHead>بستانکار</TableHead>
+          {showRunningBalance && <TableHead>مانده</TableHead>}
         </TableRow>
       </TableHeader>
       <TableBody>

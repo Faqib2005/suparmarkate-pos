@@ -189,7 +189,7 @@ export function AlertsPage() {
       const params = new URLSearchParams({ days: "30" });
       if (categoryId !== "all") params.set("categoryId", categoryId);
       const res = await fetch(`${API_BASE_URL}/api/alerts?${params.toString()}`);
-      if (!res.ok) throw new Error("Failed to load alerts");
+      if (!res.ok) throw new Error("خواندن هشدارها ناکام شد");
 
       const json = await res.json();
       setData(json.data);

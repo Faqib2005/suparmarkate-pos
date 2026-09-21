@@ -35,13 +35,13 @@ export function PosQrCard({ session, onRefresh }: PosQrCardProps) {
             <div className="mx-auto w-full max-w-[220px] rounded-3xl bg-white p-4">
               <img
                 src={session.connection.qrImageUrl}
-                alt="POS QR Code"
+                alt="کد QR صندوق فروش"
                 className="block w-full"
               />
             </div>
 
             <div className="rounded-xl border border-border bg-background p-3">
-              <div className="text-xs text-muted-foreground">Session ID</div>
+              <div className="text-xs text-muted-foreground">شناسه نشست</div>
               <code className="block max-h-16 overflow-y-auto break-all text-left text-xs text-primary" dir="ltr">
                 {session.session.id}
               </code>

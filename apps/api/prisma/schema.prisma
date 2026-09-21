@@ -1313,6 +1313,8 @@ model Sale {
 
   items SaleItem[]
   returns SaleReturn[]
+  exchangesAsSource SaleExchange[] @relation("SaleExchangeSourceSale")
+  exchangesAsReplacement SaleExchange[] @relation("SaleExchangeReplacementSale")
 
   @@index([customerId])
   @@index([currencyId])
@@ -1407,6 +1409,7 @@ model SaleReturn {
   updatedAt DateTime @updatedAt
 
   items SaleReturnItem[]
+  exchange SaleExchange?
 
   @@index([saleId])
   @@index([customerId])
@@ -1416,6 +1419,31 @@ model SaleReturn {
   @@index([posDeviceId])
   @@index([createdAt])
   @@index([cancelledAt])
+}
+
+model SaleExchange {
+  id String @id @default(cuid())
+  exchangeNo String @unique
+
+  sourceSaleId String
+  sourceSale Sale @relation("SaleExchangeSourceSale", fields: [sourceSaleId], references: [id])
+
+  replacementSaleId String @unique
+  replacementSale Sale @relation("SaleExchangeReplacementSale", fields: [replacementSaleId], references: [id])
+
+  saleReturnId String @unique
+  saleReturn SaleReturn @relation(fields: [saleReturnId], references: [id])
+
+  cashPaidAmount Decimal @default(0) @db.Decimal(18, 4)
+  creditApplied Decimal @default(0) @db.Decimal(18, 4)
+  outstandingAmount Decimal @default(0) @db.Decimal(18, 4)
+
+  note String?
+  createdByUserId String?
+  createdAt DateTime @default(now())
+
+  @@index([sourceSaleId])
+  @@index([createdAt])
 }
 
 model SaleReturnItem {

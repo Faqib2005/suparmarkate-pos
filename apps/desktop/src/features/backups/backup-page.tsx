@@ -171,7 +171,7 @@ export function BackupPage() {
       }
 
       const jobId = json?.data?.id;
-      if (!jobId) throw new Error("Backup job was not created");
+      if (!jobId) throw new Error("کار بکاپ ساخته نشد");
 
       toast.success("ساخت بکاپ آغاز شد");
       for (;;) {
@@ -256,10 +256,10 @@ export function BackupPage() {
       const json = await response.json().catch(() => null);
 
       if (!response.ok) {
-        throw new Error(json?.message || "Restore ناکام شد");
+        throw new Error(json?.message || "بازگردانی بکاپ ناکام شد");
       }
 
-      toast.success(`Restore تکمیل شد. Safety backup: ${json?.data?.safetyBackup || "-"}`);
+      toast.success(`بازگردانی تکمیل شد. بکاپ ایمنی: ${json?.data?.safetyBackup || "-"}`);
       setRestoreTarget(null);
       setRestorePreview(null);
       setConfirmText("");
@@ -267,7 +267,7 @@ export function BackupPage() {
       localStorage.removeItem("belal_auth_user");
       window.setTimeout(() => window.location.reload(), 1200);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Restore ناکام شد");
+      toast.error(error instanceof Error ? error.message : "بازگردانی بکاپ ناکام شد");
     } finally {
       setIsWorking(false);
     }
@@ -343,7 +343,7 @@ export function BackupPage() {
               نسخه پشتیبان و بازیابی
             </CardTitle>
             <CardDescription>
-              Restore قبل از جایگزینی اطلاعات، یک بکاپ فوری از وضعیت فعلی می‌سازد.
+              بازگردانی قبل از جایگزینی اطلاعات، یک بکاپ فوری از وضعیت فعلی می‌سازد.
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -407,7 +407,7 @@ export function BackupPage() {
                             onClick={() => void prepareRestore(file)}
                           >
                             <ArchiveRestore className="size-4" />
-                            <span>Restore</span>
+                            <span>بازگردانی</span>
                           </DropdownMenuItem>
                           <DropdownMenuItem variant="destructive" onClick={() => setDeleteTarget(file)}>
                             <Trash2 className="size-4" />
@@ -508,7 +508,7 @@ export function BackupPage() {
       >
         <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle>تایید Restore</DialogTitle>
+            <DialogTitle>تایید بازگردانی</DialogTitle>
             <DialogDescription>
               این عملیات اطلاعات فعلی فروشگاه را با بکاپ انتخاب‌شده جایگزین می‌کند و قبل از شروع، بکاپ فوری می‌سازد.
             </DialogDescription>
@@ -550,7 +550,7 @@ export function BackupPage() {
               disabled={confirmText !== "RESTORE" || isWorking}
               onClick={restoreBackup}
             >
-              اجرای Restore
+              اجرای بازگردانی
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -34,7 +34,7 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
 
   if (!res.ok) {
     throw new ApiRequestError(
-      json?.message || json?.error?.message || "Request failed",
+      json?.message || json?.error?.message || "درخواست انجام نشد. لطفاً دوباره کوشش کنید.",
       res.status,
       json
     );

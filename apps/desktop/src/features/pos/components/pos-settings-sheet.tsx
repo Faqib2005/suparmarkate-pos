@@ -168,7 +168,7 @@ export function PosSettingsSheet({
         <div className="mt-6 space-y-4">
           <SettingSection icon={<Server />} title="اتصال سرور">
             <div className="space-y-2 text-sm">
-              <label className="text-muted-foreground">API فعلی</label>
+              <label className="text-muted-foreground">آدرس فعلی سرور</label>
               <code
                 className="block break-all border border-border bg-muted/30 p-3 text-left text-primary"
                 dir="ltr"
@@ -404,8 +404,8 @@ export function PosSettingsSheet({
           <div className="grid gap-3 sm:grid-cols-2">
             <InfoTile
               icon={<Building2 />}
-              label="Cart Sync"
-              value="Server-side"
+              label="همگام‌سازی سبد"
+              value="در سرور"
             />
             <InfoTile
               icon={<WarehouseIcon />}

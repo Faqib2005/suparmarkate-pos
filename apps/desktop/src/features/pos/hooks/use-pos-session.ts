@@ -195,10 +195,12 @@ export function usePosSession() {
   }, [subtotal, invoiceDiscount]);
 
   const itemsCount = useMemo(() => {
-    return summary?.itemsCount ?? cartItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    return (
+      summary?.itemsCount ?? cartItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+    );
   }, [summary, cartItems]);
 
-  const effectivePaidAmount = paidAmount > 0 ? paidAmount : payableTotal;
+  const effectivePaidAmount = paidAmount >= 0 ? paidAmount : payableTotal;
 
   const remainingAmount = useMemo(() => {
     return Math.max(0, payableTotal - effectivePaidAmount);
@@ -227,7 +229,7 @@ export function usePosSession() {
   const readinessIssues = useMemo(() => {
     const issues: string[] = [];
 
-    if (!apiBaseUrl) issues.push("API آماده نیست");
+    if (!apiBaseUrl) issues.push("اتصال به سرور آماده نیست");
     if (!session?.session.id) issues.push("جلسه فروش ساخته نشده است");
     if (!currency?.id) issues.push("کرنسی اصلی تنظیم نشده است");
     if (
@@ -247,6 +249,7 @@ export function usePosSession() {
     if (Number(invoiceDiscount || 0) > subtotal) {
       issues.push("تخفیف کلی از جمع اجناس بیشتر است");
     }
+
 
     if (payableTotal > 0 && effectivePaidAmount < payableTotal && !selectedCustomerPartyId) {
       issues.push("برای فروش نسیه باید مشتری انتخاب شود");
@@ -273,9 +276,7 @@ export function usePosSession() {
   ]);
 
   const canSubmitSale = readinessIssues.length === 0 && !isSubmittingSale;
-  const saleDisabledReason = isSubmittingSale
-    ? "فروش در حال ثبت است"
-    : readinessIssues[0] || "";
+  const saleDisabledReason = isSubmittingSale ? "فروش در حال ثبت است" : readinessIssues[0] || "";
 
   const shiftStats = useMemo(() => {
     const invoiceCount = shift.sales.length;
@@ -321,10 +322,7 @@ export function usePosSession() {
       const configuredUrl = new URL(configuredBaseUrl);
       const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
 
-      if (
-        localHosts.has(overrideUrl.hostname) &&
-        !localHosts.has(configuredUrl.hostname)
-      ) {
+      if (localHosts.has(overrideUrl.hostname) && !localHosts.has(configuredUrl.hostname)) {
         return configuredBaseUrl;
       }
     } catch {
@@ -340,6 +338,30 @@ export function usePosSession() {
     const port = import.meta.env.VITE_POS_WS_PORT || "4001";
 
     return `${protocol}//${api.hostname}:${port}?sessionId=${encodeURIComponent(sessionId)}&clientType=desktop`;
+  }
+
+  function resolvePosWebSocketUrl(
+    baseUrl: string,
+    connectionUrl: string | null | undefined,
+    sessionId: string,
+  ) {
+    if (!connectionUrl) return buildPosWebSocketUrl(baseUrl, sessionId);
+
+    try {
+      const api = new URL(baseUrl);
+      const publishedSocket = new URL(connectionUrl);
+      const protocol = api.protocol === "https:" ? "wss:" : "ws:";
+
+      // Keep the public port supplied by the API (for example 5001), but use
+      // the host the desktop successfully used for its API request. This keeps
+      // POS working even when an old LAN IP remains in server configuration.
+      publishedSocket.protocol = protocol;
+      publishedSocket.hostname = api.hostname;
+
+      return publishedSocket.toString();
+    } catch {
+      return buildPosWebSocketUrl(baseUrl, sessionId);
+    }
   }
 
   function normalizeCartBarcode(value?: string | null) {
@@ -418,11 +440,7 @@ export function usePosSession() {
         if (!nextCart.items.length) {
           setHighlightedCartItemKey(null);
         } else if (options?.highlightChangedItem || options?.highlightBarcode) {
-          const key = findHighlightedCartItemKey(
-            nextCart,
-            previousCart,
-            options?.highlightBarcode,
-          );
+          const key = findHighlightedCartItemKey(nextCart, previousCart, options?.highlightBarcode);
 
           if (key) setHighlightedCartItemKey(key);
         }
@@ -622,7 +640,7 @@ export function usePosSession() {
     ws.onopen = () => {
       setIsWsConnected(true);
       setStatus("صندوق فروش آماده است");
-      toast.success("WebSocket وصل شد");
+      toast.success("اتصال زنده صندوق فروش برقرار شد");
     };
 
     ws.onmessage = (event) => {
@@ -746,7 +764,7 @@ export function usePosSession() {
         currencyId: nextCurrency.id,
         exchangeRate,
       }).catch((error: any) => {
-        toast.error(error?.message || "تغییر کرنسی POS ناکام شد");
+        toast.error(error?.message || "تغییر کرنسی صندوق فروش ناکام شد");
       });
     }
 
@@ -754,8 +772,8 @@ export function usePosSession() {
 
     const savedAccountStillValid = cashRegisters.some((register) =>
       register.accounts.some(
-        (account) => account.id === savedCashAccountId && account.currencyId === nextCurrency.id
-      )
+        (account) => account.id === savedCashAccountId && account.currencyId === nextCurrency.id,
+      ),
     );
 
     if (savedAccountStillValid) {
@@ -799,7 +817,7 @@ export function usePosSession() {
           warehouseId: nextWarehouse.id,
         });
       } catch (error: any) {
-        toast.error(error?.message || "تغییر گدام POS ناکام شد");
+        toast.error(error?.message || "تغییر گدام صندوق فروش ناکام شد");
         return;
       }
     }
@@ -915,7 +933,7 @@ export function usePosSession() {
       await refreshHeldCarts(baseUrl, session.session.id);
     }
 
-    toast.success("اطلاعات POS بروزرسانی شد");
+    toast.success("اطلاعات صندوق فروش به‌روزرسانی شد");
   }
 
   async function loadCustomerList(baseUrl: string, search = customerSearchTerm) {
@@ -975,11 +993,13 @@ export function usePosSession() {
     pendingScanBarcodeRef.current = barcode || null;
 
     if (!productId) {
-      if (sendWsMessage({
-        type: "SCAN_BARCODE",
-        barcode: scanValue,
-        warehouseId: warehouse?.id || null,
-      })) {
+      if (
+        sendWsMessage({
+          type: "SCAN_BARCODE",
+          barcode: scanValue,
+          warehouseId: warehouse?.id || null,
+        })
+      ) {
         return;
       }
     }
@@ -996,18 +1016,21 @@ export function usePosSession() {
       });
 
       if (res.data?.cart) {
-        applyServerCart({
-          cart: res.data.cart,
-          summary: res.data.cartSummary,
-        }, {
-          highlightBarcode: barcode || null,
-          highlightChangedItem: true,
-        });
+        applyServerCart(
+          {
+            cart: res.data.cart,
+            summary: res.data.cartSummary,
+          },
+          {
+            highlightBarcode: barcode || null,
+            highlightChangedItem: true,
+          },
+        );
       }
 
       toast.success("محصول به سبد اضافه شد");
     } catch (error: any) {
-      const errorBody = error instanceof ApiRequestError ? error.body as any : null;
+      const errorBody = error instanceof ApiRequestError ? (error.body as any) : null;
       const errorCode = errorBody?.error?.code || errorBody?.code;
       const message = error?.message || "افزودن محصول ناکام شد";
       if (errorCode === "BARCODE_AMBIGUOUS") {
@@ -1026,7 +1049,7 @@ export function usePosSession() {
     setSummary(null);
     setHeldCarts([]);
     await bootstrap();
-    toast.success("جلسه POS جدید ساخته شد");
+    toast.success("جلسه جدید صندوق فروش ساخته شد");
   }
 
   async function bootstrap() {
@@ -1052,12 +1075,10 @@ export function usePosSession() {
         "CASH";
 
       const selectedCurrency =
-        defaults.currencies.find((item) => item.id === savedCurrencyId) ||
-        defaults.currency;
+        defaults.currencies.find((item) => item.id === savedCurrencyId) || defaults.currency;
 
       const selectedWarehouse =
-        defaults.warehouses.find((item) => item.id === savedWarehouseId) ||
-        defaults.warehouse;
+        defaults.warehouses.find((item) => item.id === savedWarehouseId) || defaults.warehouse;
 
       setCurrency(selectedCurrency);
       setWarehouse(selectedWarehouse);
@@ -1066,8 +1087,8 @@ export function usePosSession() {
         register.accounts.some(
           (account) =>
             account.id === savedCashAccountId &&
-            (!selectedCurrency?.id || account.currencyId === selectedCurrency.id)
-        )
+            (!selectedCurrency?.id || account.currencyId === selectedCurrency.id),
+        ),
       );
 
       if (savedAccountStillValid) {
@@ -1097,7 +1118,9 @@ export function usePosSession() {
       setBankAccountIdState(
         savedBankStillValid ? savedBankAccountId : matchingBank?.id || defaults.bankAccountId,
       );
-      setPaymentMethodState(["CASH", "CARD", "SPLIT"].includes(savedPaymentMethod) ? savedPaymentMethod : "CASH");
+      setPaymentMethodState(
+        ["CASH", "CARD", "SPLIT"].includes(savedPaymentMethod) ? savedPaymentMethod : "CASH",
+      );
 
       const sessionRes = await createPosSession(baseUrl);
       cartRevisionRef.current = 0;
@@ -1107,9 +1130,7 @@ export function usePosSession() {
         await updatePosSessionSettings(baseUrl, sessionRes.data.session.id, {
           warehouseId: selectedWarehouse.id,
           currencyId: selectedCurrency?.id || null,
-          exchangeRate: selectedCurrency?.isBase
-            ? 1
-            : Number(selectedCurrency?.latestRate || 1),
+          exchangeRate: selectedCurrency?.isBase ? 1 : Number(selectedCurrency?.latestRate || 1),
         });
       } else if (selectedCurrency?.id) {
         await updatePosSessionSettings(baseUrl, sessionRes.data.session.id, {
@@ -1127,14 +1148,19 @@ export function usePosSession() {
       });
       await loadCustomerList(baseUrl);
 
+      // The API knows the published Docker port (for example 5001), while the
+      // internal container always listens on 4001. Prefer that authoritative URL.
       connectWebSocket(
-        buildPosWebSocketUrl(baseUrl, sessionRes.data.session.id) ||
+        resolvePosWebSocketUrl(
+          baseUrl,
           sessionRes.data.connection.desktopWebSocketUrl,
+          sessionRes.data.session.id,
+        ),
       );
       setStatus("QR را با اپ موبایل اسکن کنید");
     } catch (error: any) {
       setStatus(error?.message || "خطا در آماده‌سازی POS");
-      toast.error(error?.message || "خطا در آماده‌سازی POS");
+      toast.error(error?.message || "خطا در آماده‌سازی صندوق فروش");
     } finally {
       setIsBooting(false);
     }
@@ -1203,14 +1229,16 @@ export function usePosSession() {
       unitId?: string;
       unitPrice?: number;
       discount?: number;
-    }
+    },
   ) {
     const itemBeforeUpdate = cartItems.find((item) => item.key === key);
     const nextConversionRate =
       input.unitId && itemBeforeUpdate?.unitId !== input.unitId
         ? Number(
             itemBeforeUpdate?.unitOptions?.find((unit) => unit.unitId === input.unitId)
-              ?.conversionRate || itemBeforeUpdate?.conversionRate || 1,
+              ?.conversionRate ||
+              itemBeforeUpdate?.conversionRate ||
+              1,
           )
         : Number(itemBeforeUpdate?.conversionRate || 1);
     const nextBaseQuantity =
@@ -1219,7 +1247,8 @@ export function usePosSession() {
         : Number(input.quantity || 0) * nextConversionRate;
     const crossesSnapshot =
       input.quantity !== undefined &&
-      nextBaseQuantity > Number(itemBeforeUpdate?.availableBaseQuantity ?? itemBeforeUpdate?.totalStock ?? 0);
+      nextBaseQuantity >
+        Number(itemBeforeUpdate?.availableBaseQuantity ?? itemBeforeUpdate?.totalStock ?? 0);
 
     applyOptimisticCartItemUpdate(key, input);
 
@@ -1255,10 +1284,12 @@ export function usePosSession() {
     applyServerCart(res.data);
   }
 
-  async function clearCart(options: {
-    forceRest?: boolean;
-    preserveSaleAttempt?: boolean;
-  } = {}) {
+  async function clearCart(
+    options: {
+      forceRest?: boolean;
+      preserveSaleAttempt?: boolean;
+    } = {},
+  ) {
     if (!options.forceRest && sendWsMessage({ type: "CLEAR_CART" })) {
       setInvoiceDiscount(0);
       if (!options.preserveSaleAttempt) saleAttemptRef.current = null;
@@ -1318,9 +1349,7 @@ export function usePosSession() {
           return;
         }
       }
-      toast.error(
-        error instanceof Error ? error.message : "ساخت لینک امن یا چاپ رسید ناکام شد",
-      );
+      toast.error(error instanceof Error ? error.message : "ساخت لینک امن یا چاپ رسید ناکام شد");
     }
   }
 
@@ -1425,7 +1454,7 @@ export function usePosSession() {
               <td>${sale.total}</td>
               <td>${sale.paidAmount}</td>
             </tr>
-          `
+          `,
         )
         .join("")}
     </tbody>
@@ -1485,7 +1514,7 @@ export function usePosSession() {
     const requestedPaidAmount =
       paymentMethod === "SPLIT"
         ? Number(splitCashAmount || 0) + Number(splitCardAmount || 0)
-        : paidAmount > 0
+        : paidAmount >= 0
           ? paidAmount
           : payableTotal;
     const finalPaidAmount = Math.min(requestedPaidAmount, payableTotal);
@@ -1509,16 +1538,19 @@ export function usePosSession() {
 
     if (finalPaidAmount < payableTotal && !selectedCustomerPartyId) {
       toast.error("برای فروش نسیه باید مشتری انتخاب شود");
+      setIsSubmittingSale(false);
       return;
     }
 
     if (paymentMethod === "SPLIT" && splitCardAmount > 0 && !bankAccountId) {
       toast.error("حساب بانکی برای بخش کارت پرداخت ترکیبی انتخاب نشده است");
+      setIsSubmittingSale(false);
       return;
     }
 
     if (paymentMethod === "SPLIT" && splitCashAmount > 0 && !cashAccountId) {
       toast.error("حساب صندوق نقدی برای بخش نقد پرداخت ترکیبی انتخاب نشده است");
+      setIsSubmittingSale(false);
       return;
     }
 

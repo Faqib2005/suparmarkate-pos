@@ -111,7 +111,7 @@ export function AttendanceScanPage() {
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/me`);
-      if (!response.ok) throw new Error("No session");
+      if (!response.ok) throw new Error("نشست فعال پیدا نشد");
       const json = await response.json();
       setUser(json.data.user);
       localStorage.setItem(AUTH_USER_KEY, JSON.stringify(json.data.user));

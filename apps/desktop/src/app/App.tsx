@@ -375,7 +375,7 @@ function installAuthenticatedFetch() {
       headers.set("x-pos-device-code", deviceCode);
       headers.set(
         "x-pos-device-name",
-        navigator.userAgent.includes("Mobile") ? "Mobile POS" : "Desktop POS",
+        navigator.userAgent.includes("Mobile") ? "Mobile Point of Sale" :" Desktop Point of Sale",
       );
       headers.set(
         "x-pos-device-type",
@@ -864,7 +864,7 @@ function App() {
 
     fetch(`${API_BASE_URL}/api/auth/me`)
       .then((res) => {
-        if (!res.ok) throw new Error("Session expired");
+        if (!res.ok) throw new Error("نشست شما منقضی شده است. دوباره وارد شوید.");
         return res.json();
       })
       .then((json) => {
@@ -1580,10 +1580,10 @@ function ShellHeader({
           ) : null}
           <div className="min-w-0 text-end">
             <CardTitle className="truncate text-xs sm:text-sm">{currentLabel}</CardTitle>
-            <CardDescription className="hidden text-xs sm:block">Muhaseb / LAN Ready</CardDescription>
+            <CardDescription className="hidden text-xs sm:block">محاسب / آماده برای شبکه</CardDescription>
           </div>
           <Badge className="hidden rounded-xl border-primary/30 bg-primary/10 px-3 py-2 text-primary sm:inline-flex">
-            Offline
+            آفلاین
           </Badge>
           <Button
             variant="outline"
@@ -1714,7 +1714,7 @@ function AdminShell({
   const [isCompactNavigation, setIsCompactNavigation] = useState(
     () =>
       typeof window !== "undefined" &&
-      window.matchMedia("(max-width: 767px) and (pointer: coarse)").matches,
+      window.matchMedia("(max-width: 1023px)").matches,
   );
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
     () => localStorage.getItem("muhaseb.sidebarCollapsed") === "true",
@@ -1787,10 +1787,9 @@ function AdminShell({
   }, [location.pathname]);
 
   useEffect(() => {
-    // Desktop browsers can be zoomed until their CSS width looks like a phone.
-    // Keep the collapsible desktop sidebar for a mouse/trackpad, and use the drawer
-    // only for narrow touch-first devices.
-    const mediaQuery = window.matchMedia("(max-width: 767px) and (pointer: coarse)");
+    // The drawer must be available in every narrow viewport, including browser
+    // device emulation where the pointer is still reported as a mouse.
+    const mediaQuery = window.matchMedia("(max-width: 1023px)");
     const syncNavigationMode = () => setIsCompactNavigation(mediaQuery.matches);
     syncNavigationMode();
     mediaQuery.addEventListener("change", syncNavigationMode);
@@ -1902,9 +1901,9 @@ function AdminShell({
         <DialogContent
           dir="rtl"
           showCloseButton={false}
-          className="inset-y-0 inset-s-0 top-0 flex h-dvh min-h-0 w-[min(22rem,calc(100vw-1.5rem))] max-w-none flex-col gap-0 translate-x-0 translate-y-0 overflow-hidden rounded-s-none border-y-0 border-s-0 p-0 shadow-2xl rtl:translate-x-0"
+          className="inset-y-0 inset-s-0 top-0 !flex h-dvh min-h-0 w-[min(22rem,calc(100vw-1.5rem))] max-w-none flex-col gap-0 translate-x-0 translate-y-0 overflow-hidden rounded-s-none border-y-0 border-s-0 p-0 shadow-2xl rtl:translate-x-0"
         >
-          <Sidebar className="h-full min-h-0 overflow-hidden rounded-none border-0 bg-sidebar shadow-none">
+          <Sidebar className="h-full min-h-0 !flex overflow-hidden rounded-none border-0 bg-sidebar shadow-none">
             <SidebarHeader className="shrink-0 p-3">
               <div className="flex items-center gap-3 rounded-lg border border-sidebar-border bg-sidebar-accent p-3">
                 <div className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-background">
@@ -1931,7 +1930,7 @@ function AdminShell({
             </SidebarHeader>
 
             <SidebarContent
-              className="min-h-0 flex-1 touch-pan-y overflow-y-scroll overscroll-contain pb-6 [-webkit-overflow-scrolling:touch]"
+              className="min-h-0 flex-1 touch-pan-y overflow-y-scroll overscroll-y-contain pb-6 [-webkit-overflow-scrolling:touch]"
               style={{ WebkitOverflowScrolling: "touch" }}
             >
               <SidebarMenu>
@@ -1982,7 +1981,7 @@ function DashboardPage() {
       })
       .catch(() => {
         if (!ignore) {
-          toast.warning("داشبورد با داده نمونه نمایش داده شد؛ API در دسترس نیست");
+          toast.warning("داشبورد با داده نمونه نمایش داده شد؛ سرور در دسترس نیست");
         }
       });
 
@@ -2337,7 +2336,7 @@ function AdminDataPage({ config }: { config: AdminPageConfig }) {
           <p className="text-sm text-muted-foreground">{config.note}</p>
           <Button
             variant="outline"
-            onClick={() => toast.info("این workflow در فاز بعدی به API وصل می‌شود")}
+            onClick={() => toast.info("این روند در مرحله بعدی به سرور وصل می‌شود")}
           >
             <ArchiveRestore className="size-4" />
             اکشن‌های تکمیلی
@@ -2349,7 +2348,7 @@ function AdminDataPage({ config }: { config: AdminPageConfig }) {
         <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="text-base">گزارش ضایعات</CardTitle>
-            <CardDescription>آخرین اجناس ضایع‌شده با گدام، lot و کاربر ثبت‌کننده.</CardDescription>
+            <CardDescription>آخرین اجناس ضایع‌شده با گدام، لات و کاربر ثبت‌کننده.</CardDescription>
           </CardHeader>
           <CardContent>
             <DenseTable
@@ -3553,7 +3552,17 @@ function SalesPage() {
   const [returnLines, setReturnLines] = useState<ReturnLineForm[]>([]);
   const [refundAccountKey, setRefundAccountKey] = useState("");
   const [refundAmount, setRefundAmount] = useState(0);
+  const [refundAmountManuallyEdited, setRefundAmountManuallyEdited] = useState(false);
   const [returnNote, setReturnNote] = useState("");
+  const [exchangeLines, setExchangeLines] = useState<SaleLineForm[]>([]);
+  const [exchangeLineDialogOpen, setExchangeLineDialogOpen] = useState(false);
+  const [editingExchangeLineId, setEditingExchangeLineId] = useState<string | null>(null);
+  const [exchangeLineDraft, setExchangeLineDraft] = useState<SaleLineForm>(emptySaleLineDraft);
+  const [exchangePaymentAccountKey, setExchangePaymentAccountKey] = useState("");
+  const [exchangePaidAmount, setExchangePaidAmount] = useState(0);
+  const [exchangePaidAmountManuallyEdited, setExchangePaidAmountManuallyEdited] = useState(false);
+  const [isSubmittingExchange, setIsSubmittingExchange] = useState(false);
+  const [exchangeClientRequestId, setExchangeClientRequestId] = useState("");
   const [detailsSale, setDetailsSale] = useState<any | null>(null);
   const [cancelSale, setCancelSale] = useState<any | null>(null);
   const [cancelReason, setCancelReason] = useState("");
@@ -3588,6 +3597,7 @@ function SalesPage() {
   const [isLoadingReturnQuality, setIsLoadingReturnQuality] = useState(false);
   const saleProductSearchSeqRef = useRef(0);
   const saleProductSearchAbortRef = useRef<AbortController | null>(null);
+  const selectedSaleProductIdsRef = useRef<string[]>([]);
 
   useEffect(() => () => saleProductSearchAbortRef.current?.abort(), []);
 
@@ -3651,6 +3661,7 @@ function SalesPage() {
               party: item.customer?.name,
               total: money(item.subtotal, item.currency),
               settled: money(item.refundAmount, item.currency),
+              __canDelete: !item.cancelledAt && !item.exchange,
             }))
           : [],
       );
@@ -3843,7 +3854,13 @@ function SalesPage() {
         replaceLookupOptionsKeepingSelected(
           current,
           rows,
-          saleLines.map((line) => line.productId),
+          [
+            ...selectedSaleProductIdsRef.current,
+            ...saleLines.map((line) => line.productId),
+            saleLineDraft.productId,
+            ...exchangeLines.map((line) => line.productId),
+            exchangeLineDraft.productId,
+          ],
         ),
       );
     } catch (error: any) {
@@ -3888,6 +3905,13 @@ function SalesPage() {
     const product = products.find((item) => item.id === productId);
     const unit = product?.units?.find((item: any) => item.unitId === unitId);
     return basePriceInCurrency(Number(unit?.salePrice || 0), selectedCurrency);
+  };
+
+  const saleUnitPriceForCurrency = (productId: string, unitId: string, currencyId: string) => {
+    const product = products.find((item) => item.id === productId);
+    const unit = product?.units?.find((item: any) => item.unitId === unitId);
+    const currency = currencies.find((item) => item.id === currencyId) || null;
+    return basePriceInCurrency(Number(unit?.salePrice || 0), currency);
   };
 
   const changeSaleCurrency = (currencyId: string) => {
@@ -3957,6 +3981,12 @@ function SalesPage() {
 
   const setSaleLineProduct = (lineId: string, productId: string) => {
     const product = products.find((item) => item.id === productId);
+    if (!product) {
+      toast.error("محصول انتخاب‌شده دیگر در نتایج جستجو نیست؛ دوباره جستجو کنید");
+      return;
+    }
+    selectedSaleProductIdsRef.current = [productId];
+    setProducts((current) => mergeById([product], current));
     const saleUnit = product?.units?.find((unit: any) => unit.isDefaultSale) || product?.units?.[0];
 
     updateSaleLine(lineId, {
@@ -3975,6 +4005,12 @@ function SalesPage() {
 
   const setSaleDraftProduct = (productId: string) => {
     const product = products.find((item) => item.id === productId);
+    if (!product) {
+      toast.error("محصول انتخاب‌شده دیگر در نتایج جستجو نیست؛ دوباره جستجو کنید");
+      return;
+    }
+    selectedSaleProductIdsRef.current = [productId];
+    setProducts((current) => mergeById([product], current));
     const saleUnit = product?.units?.find((unit: any) => unit.isDefaultSale) || product?.units?.[0];
 
     setSaleLineDraft((current) => ({
@@ -4006,6 +4042,90 @@ function SalesPage() {
     );
     setSaleItemDialogOpen(false);
   };
+
+  const exchangeCurrency =
+    currencies.find((currency) => currency.id === returnSale?.currencyId) || selectedCurrency;
+  const exchangeTotal = exchangeLines.reduce(
+    (sum, line) => sum + invoiceLineTotal(line.quantity, line.unitPrice, line.discount),
+    0,
+  );
+
+  const openExchangeLineDialog = (line?: SaleLineForm) => {
+    setEditingExchangeLineId(line?.id || null);
+    setExchangeLineDraft(
+      line || makeSaleLine(products, warehouses, exchangeCurrency),
+    );
+    setExchangeLineDialogOpen(true);
+  };
+
+  const setExchangeDraftProduct = (productId: string) => {
+    const product = products.find((item) => item.id === productId);
+    if (!product) {
+      toast.error("محصول انتخاب‌شده دیگر در نتایج جستجو نیست؛ دوباره جستجو کنید");
+      return;
+    }
+    selectedSaleProductIdsRef.current = [productId];
+    setProducts((current) => mergeById([product], current));
+    const saleUnit = product.units?.find((unit: any) => unit.isDefaultSale) || product.units?.[0];
+    const unitId = saleUnit?.unitId || product.baseUnitId || "";
+
+    setExchangeLineDraft((current) => ({
+      ...current,
+      productId,
+      warehouseId: product.defaultWarehouseId || warehouses[0]?.id || "",
+      unitId,
+      unitPrice: saleUnitPriceForCurrency(productId, unitId, returnSale?.currencyId || ""),
+    }));
+  };
+
+  const saveExchangeLine = () => {
+    if (
+      !exchangeLineDraft.productId ||
+      !exchangeLineDraft.warehouseId ||
+      !exchangeLineDraft.unitId ||
+      exchangeLineDraft.quantity <= 0 ||
+      exchangeLineDraft.unitPrice < 0 ||
+      exchangeLineDraft.discount < 0
+    ) {
+      toast.error("همه معلومات قلم جدید را درست وارد کنید");
+      return;
+    }
+
+    setExchangeLines((current) =>
+      editingExchangeLineId
+        ? current.map((line) =>
+            line.id === editingExchangeLineId
+              ? { ...exchangeLineDraft, id: editingExchangeLineId }
+              : line,
+          )
+        : [...current, { ...exchangeLineDraft, id: createClientId() }],
+    );
+    setExchangeLineDialogOpen(false);
+  };
+
+  const exchangeItemRows: InvoiceItemRow[] = exchangeLines.map((line) => {
+    const unitInfo = productUnitInfo(products, line.productId, line.unitId);
+    const baseQuantity = line.quantity * unitInfo.conversionRate;
+    const baseSalePrice =
+      unitInfo.conversionRate > 0 ? line.unitPrice / unitInfo.conversionRate : line.unitPrice;
+    const total = invoiceLineTotal(line.quantity, line.unitPrice, line.discount);
+    return {
+      id: line.id,
+      product: productLabel(products, line.productId),
+      warehouse: lookupLabel(warehouses, line.warehouseId),
+      unit: lookupLabel(saleUnitOptions(line.productId), line.unitId),
+      quantity: line.quantity,
+      unitAmount: line.unitPrice,
+      discount: line.discount,
+      netTotal: total,
+      baseQuantity,
+      baseUnit: unitInfo.baseUnitName,
+      baseUnitAmount: baseSalePrice,
+      salePrice: line.unitPrice,
+      baseSalePrice,
+      total,
+    };
+  });
 
   const saleLineNetTotals = saleLines.map((line) =>
     invoiceLineTotal(line.quantity, line.unitPrice, line.discount),
@@ -4138,6 +4258,9 @@ function SalesPage() {
       const account = paymentAccounts.find((item) => item.currencyId === sale.currencyId);
 
       setReturnSale(sale);
+      if (sale.customer?.id) {
+        setCustomers((current) => mergeById([sale.customer], current));
+      }
       setReturnLines(
         Array.isArray(sale.items)
           ? sale.items.map((item: any) => ({ itemId: item.id, quantity: 0 }))
@@ -4145,7 +4268,16 @@ function SalesPage() {
       );
       setRefundAccountKey(account ? `${account.type}:${account.id}` : "");
       setRefundAmount(0);
+      setRefundAmountManuallyEdited(false);
       setReturnNote("");
+      setExchangeLines([]);
+      setEditingExchangeLineId(null);
+      setExchangeLineDraft(emptySaleLineDraft);
+      setExchangeLineDialogOpen(false);
+      setExchangePaymentAccountKey(account ? `${account.type}:${account.id}` : "");
+      setExchangePaidAmount(0);
+      setExchangePaidAmountManuallyEdited(false);
+      setExchangeClientRequestId(createClientId());
       setReturnDialogOpen(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "خواندن فاکتور فروش ناکام شد");
@@ -4463,12 +4595,56 @@ function SalesPage() {
     return sum + lineTotal;
   }, 0);
   const roundedSaleReturnSubtotal = Number(saleReturnSubtotal.toFixed(4));
+  const automaticRefundAmount = Number(
+    Math.max(0, roundedSaleReturnSubtotal - exchangeTotal).toFixed(4),
+  );
+  const automaticExchangePaidAmount = Number(
+    Math.max(0, exchangeTotal - roundedSaleReturnSubtotal).toFixed(4),
+  );
+  const exchangeCredit = Number(Math.max(0, roundedSaleReturnSubtotal - refundAmount).toFixed(4));
+  const exchangeSuggestedPaidAmount = Number(Math.max(0, exchangeTotal - exchangeCredit).toFixed(4));
+  const exchangeBalanceChange = Number(
+    (exchangeTotal - exchangePaidAmount - exchangeCredit).toFixed(4),
+  );
+
+  useEffect(() => {
+    if (!returnDialogOpen) return;
+
+    setRefundAmount((current) =>
+      refundAmountManuallyEdited
+        ? Math.min(current, roundedSaleReturnSubtotal)
+        : automaticRefundAmount,
+    );
+  }, [
+    automaticRefundAmount,
+    refundAmountManuallyEdited,
+    returnDialogOpen,
+    roundedSaleReturnSubtotal,
+  ]);
+
+  useEffect(() => {
+    if (!returnDialogOpen || exchangePaidAmountManuallyEdited) return;
+    setExchangePaidAmount(
+      exchangeLines.length > 0
+        ? refundAmountManuallyEdited
+          ? exchangeSuggestedPaidAmount
+          : automaticExchangePaidAmount
+        : 0,
+    );
+  }, [
+    automaticExchangePaidAmount,
+    exchangeLines.length,
+    exchangePaidAmountManuallyEdited,
+    exchangeSuggestedPaidAmount,
+    refundAmountManuallyEdited,
+    returnDialogOpen,
+  ]);
 
   const submitSaleReturn = async () => {
     if (!returnSale) return;
 
     const selectedItems = returnLines.filter((line) => line.quantity > 0);
-    const paymentAccount = paymentAccounts.find(
+    const refundAccount = paymentAccounts.find(
       (account) => `${account.type}:${account.id}` === refundAccountKey,
     );
 
@@ -4477,9 +4653,81 @@ function SalesPage() {
       return;
     }
 
+    if (exchangeLines.length > 0) {
+      const paymentAccount = paymentAccounts.find(
+        (account) => `${account.type}:${account.id}` === exchangePaymentAccountKey,
+      );
+      const requestId = exchangeClientRequestId || createClientId();
+
+      if (refundAmount > 0 && !refundAccount) {
+        toast.error("برای برگشت نقدی، حساب صندوق یا بانک را انتخاب کنید");
+        return;
+      }
+      if (exchangePaidAmount > 0 && !paymentAccount) {
+        toast.error("برای پرداخت اقلام جدید، حساب صندوق یا بانک را انتخاب کنید");
+        return;
+      }
+
+      setExchangeClientRequestId(requestId);
+      setIsSubmittingExchange(true);
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/sale-returns/exchange`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": requestId,
+          },
+          body: JSON.stringify({
+            clientRequestId: requestId,
+            saleId: returnSale.id,
+            customerId: returnSale.customerId || null,
+            refundAccountType: refundAccount?.type || null,
+            refundAccountId: refundAccount?.id || null,
+            refundAmount,
+            note: returnNote || null,
+            returnItems: selectedItems.map((line) => ({
+              saleItemId: line.itemId,
+              quantity: line.quantity,
+            })),
+            replacement: {
+              paidAmount: exchangePaidAmount,
+              paymentAccountType: paymentAccount?.type || null,
+              paymentAccountId: paymentAccount?.id || null,
+              note: returnNote || null,
+              items: exchangeLines.map((line) => ({
+                productId: line.productId,
+                warehouseId: line.warehouseId,
+                unitId: line.unitId,
+                quantity: line.quantity,
+                unitPrice: line.unitPrice,
+                discount: line.discount,
+              })),
+            },
+          }),
+        });
+        const json = await res.json().catch(() => null);
+        if (!res.ok) {
+          throw new Error(json?.message || "ثبت تعویض فروش ناکام شد");
+        }
+
+        toast.success(
+          json?.idempotentReplay
+            ? "تعویض فروش قبلاً ثبت شده بود"
+            : "برگشت و فروش جایگزین با موفقیت ثبت شد",
+        );
+        setReturnDialogOpen(false);
+        await loadSalesData();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "ثبت تعویض فروش ناکام شد");
+      } finally {
+        setIsSubmittingExchange(false);
+      }
+      return;
+    }
+
     const effectiveRefundAmount = returnSale.customerId ? refundAmount : roundedSaleReturnSubtotal;
 
-    if (effectiveRefundAmount > 0 && !paymentAccount) {
+    if (effectiveRefundAmount > 0 && !refundAccount) {
       toast.error("برای برگشت نقدی، حساب صندوق یا بانک را انتخاب کنید");
       return;
     }
@@ -4490,8 +4738,8 @@ function SalesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           saleId: returnSale.id,
-          refundAccountType: paymentAccount?.type || null,
-          refundAccountId: paymentAccount?.id || null,
+          refundAccountType: refundAccount?.type || null,
+          refundAccountId: refundAccount?.id || null,
           refundAmount: effectiveRefundAmount,
           note: returnNote || null,
           items: selectedItems.map((line) => ({
@@ -4609,7 +4857,7 @@ function SalesPage() {
                 { key: "total", label: "مجموع" },
                 { key: "paid", label: "پرداخت" },
                 { key: "status", label: "وضعیت" },
-                { key: "cogsStatus", label: "COGS" },
+                { key: "cogsStatus", label: "قیمت تمام‌شده" },
               ]}
               rows={sales}
               pagination={salesPagination}
@@ -4689,7 +4937,7 @@ function SalesPage() {
                 { key: "date", label: "تاریخ" },
                 { key: "party", label: "مشتری" },
                 { key: "total", label: "فروش" },
-                { key: "cogsTotal", label: "COGS قابل ثبت" },
+                { key: "cogsTotal", label: "قیمت تمام‌شده قابل ثبت" },
               ]}
               rows={cogsQualityRows}
               pagination={cogsQualityPagination}
@@ -5121,13 +5369,105 @@ function SalesPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={exchangeLineDialogOpen} onOpenChange={setExchangeLineDialogOpen}>
+        <DialogContent dir="rtl" className="sm:max-w-[min(96vw,1000px)]">
+          <DialogHeader>
+            <DialogTitle>
+              {editingExchangeLineId ? "ویرایش قلم جایگزین" : "افزودن قلم جایگزین"}
+            </DialogTitle>
+            <DialogDescription>
+              این قلم در فروش جدیدِ مرتبط با برگشت ثبت می‌شود؛ موجودی و قیمت آن در زمان ثبت دوباره
+              بررسی خواهد شد.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <LookupSelect
+              label="جنس"
+              value={exchangeLineDraft.productId}
+              options={products}
+              onSearchChange={searchSaleProducts}
+              onChange={setExchangeDraftProduct}
+            />
+            <LookupSelect
+              label="گدام"
+              value={exchangeLineDraft.warehouseId}
+              options={warehouses}
+              onChange={(value) =>
+                setExchangeLineDraft((current) => ({ ...current, warehouseId: value }))
+              }
+            />
+            <LookupSelect
+              label="واحد"
+              value={exchangeLineDraft.unitId}
+              options={saleUnitOptions(exchangeLineDraft.productId)}
+              onChange={(value) =>
+                setExchangeLineDraft((current) => ({
+                  ...current,
+                  unitId: value,
+                  unitPrice: saleUnitPriceForCurrency(
+                    current.productId,
+                    value,
+                    returnSale?.currencyId || "",
+                  ),
+                }))
+              }
+            />
+            <NumberField
+              label="مقدار"
+              value={exchangeLineDraft.quantity}
+              onChange={(value) =>
+                setExchangeLineDraft((current) => ({ ...current, quantity: value }))
+              }
+            />
+            <NumberField
+              label="قیمت"
+              value={exchangeLineDraft.unitPrice}
+              onChange={(value) =>
+                setExchangeLineDraft((current) => ({ ...current, unitPrice: value }))
+              }
+            />
+            <NumberField
+              label="تخفیف قلم"
+              value={exchangeLineDraft.discount}
+              onChange={(value) =>
+                setExchangeLineDraft((current) => ({ ...current, discount: value }))
+              }
+            />
+          </div>
+
+          <div className="rounded-xl border border-border bg-muted/30 p-4">
+            <p className="text-xs text-muted-foreground">جمع قلم جدید</p>
+            <strong>
+              {money(
+                invoiceLineTotal(
+                  exchangeLineDraft.quantity,
+                  exchangeLineDraft.unitPrice,
+                  exchangeLineDraft.discount,
+                ),
+                exchangeCurrency?.code,
+              )}
+            </strong>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setExchangeLineDialogOpen(false)}>
+              لغو
+            </Button>
+            <Button onClick={saveExchangeLine}>
+              {editingExchangeLineId ? "ذخیره تغییرات" : "افزودن به تعویض"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={returnDialogOpen} onOpenChange={setReturnDialogOpen}>
         <DialogContent dir="rtl" className="sm:max-w-[max(96vw,1280px)]">
           <DialogHeader>
-            <DialogTitle>برگشت فروش</DialogTitle>
+            <DialogTitle>برگشت / تعویض فروش</DialogTitle>
             <DialogDescription>
-              اقلام برگشتی را وارد کنید؛ سیستم موجودی، صندوق/بانک، حساب مشتری و سند حسابداری را ثبت
-              می‌کند.
+              اقلام برگشتی را وارد کنید. با افزودن اقلام جدید، هر دو سند در یک ثبت امن ایجاد می‌شوند و
+              موجودی، صندوق/بانک، حساب مشتری و حسابداری همزمان ثبت می‌گردند.
             </DialogDescription>
           </DialogHeader>
 
@@ -5138,7 +5478,14 @@ function SalesPage() {
                 value={returnSale?.invoiceNo || returnSale?.id || ""}
                 onChange={() => undefined}
               />
-              <NumberField label="مبلغ برگشت پول" value={refundAmount} onChange={setRefundAmount} />
+              <NumberField
+                label="مبلغ برگشت پول"
+                value={refundAmount}
+                onChange={(value) => {
+                  setRefundAmountManuallyEdited(true);
+                  setRefundAmount(Math.min(Math.max(0, value), roundedSaleReturnSubtotal));
+                }}
+              />
               <LookupSelect
                 label="حساب برگشت پول"
                 value={refundAccountKey}
@@ -5208,6 +5555,111 @@ function SalesPage() {
               })}
             </div>
 
+            <div className="space-y-4 rounded-xl border border-primary/25 bg-primary/5 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold">اقلام جدید برای تعویض</p>
+                  <p className="text-xs text-muted-foreground">
+                    اختیاری است. با افزودن قلم جدید، برگشت و فروش جایگزین در یک ثبت امن انجام می‌شود.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openExchangeLineDialog()}
+                  disabled={isSubmittingExchange}
+                >
+                  <Plus className="size-4" />
+                  افزودن قلم جدید
+                </Button>
+              </div>
+
+              {exchangeLines.length > 0 ? (
+                <>
+                  <TextField
+                    label="مشتری تعویض"
+                    value={
+                      returnSale?.customer?.name ||
+                      (returnSale?.customerId
+                        ? lookupLabel(customers, returnSale.customerId)
+                        : "مشتری نقدی")
+                    }
+                    onChange={() => undefined}
+                    disabled
+                  />
+
+                  <InvoiceItemsPanel
+                    title="اقلام فروش جایگزین"
+                    addLabel="افزودن قلم"
+                    emptyLabel="هنوز قلم جایگزین وارد نشده است"
+                    unitAmountLabel="قیمت"
+                    currencyCode={exchangeCurrency?.code}
+                    rows={exchangeItemRows}
+                    onAdd={() => openExchangeLineDialog()}
+                    onEdit={(id) => {
+                      const line = exchangeLines.find((item) => item.id === id);
+                      if (line) openExchangeLineDialog(line);
+                    }}
+                    onDelete={(id) =>
+                      setExchangeLines((current) => current.filter((line) => line.id !== id))
+                    }
+                  />
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <NumberField
+                      label="پرداخت نقدی/بانکی اقلام جدید"
+                      value={exchangePaidAmount}
+                      onChange={(value) => {
+                        setExchangePaidAmountManuallyEdited(true);
+                        setExchangePaidAmount(Math.max(0, value));
+                      }}
+                      disabled={isSubmittingExchange}
+                    />
+                    <LookupSelect
+                      label="حساب دریافت مبلغ جدید"
+                      value={exchangePaymentAccountKey}
+                      options={paymentAccounts
+                        .filter(
+                          (account) =>
+                            !returnSale?.currencyId || account.currencyId === returnSale.currencyId,
+                        )
+                        .map((account) => ({
+                          id: `${account.type}:${account.id}`,
+                          name: account.name,
+                        }))}
+                      emptyLabel="بدون پرداخت نقدی"
+                      onChange={setExchangePaymentAccountKey}
+                    />
+                  </div>
+
+                  <div className="grid gap-3 rounded-lg border border-border bg-background/70 p-3 text-sm md:grid-cols-3">
+                    <div>
+                      <span className="text-muted-foreground">اعتبار برگشتی مشتری</span>
+                      <strong className="mt-1 block">{money(exchangeCredit, exchangeCurrency?.code)}</strong>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">جمع اقلام جدید</span>
+                      <strong className="mt-1 block">{money(exchangeTotal, exchangeCurrency?.code)}</strong>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">
+                        {exchangeBalanceChange > 0
+                          ? "باقی پس از کسر اعتبار برگشتی"
+                          : "اعتبار برگشتی باقی‌مانده"}
+                      </span>
+                      <strong className="mt-1 block">
+                        {money(Math.abs(exchangeBalanceChange), exchangeCurrency?.code)}
+                      </strong>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  اگر مشتری فقط جنس را برمی‌گرداند، هیچ قلم جدیدی اضافه نکنید.
+                </p>
+              )}
+            </div>
+
             <TextField label="یادداشت" value={returnNote} onChange={setReturnNote} />
             <div className="rounded-xl border border-border bg-muted/30 p-4">
               <p className="text-xs text-muted-foreground">جمع تخمینی برگشت</p>
@@ -5216,10 +5668,16 @@ function SalesPage() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setReturnDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setReturnDialogOpen(false)} disabled={isSubmittingExchange}>
               لغو
             </Button>
-            <Button onClick={submitSaleReturn}>ثبت برگشت فروش</Button>
+            <Button onClick={submitSaleReturn} disabled={isSubmittingExchange}>
+              {isSubmittingExchange
+                ? "در حال ثبت امن..."
+                : exchangeLines.length > 0
+                  ? "ثبت برگشت و فروش جایگزین"
+                  : "ثبت برگشت فروش"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -5414,6 +5872,7 @@ function PurchasesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const purchaseProductSearchSeqRef = useRef(0);
   const purchaseProductSearchAbortRef = useRef<AbortController | null>(null);
+  const selectedPurchaseProductIdsRef = useRef<string[]>([]);
 
   useEffect(() => () => purchaseProductSearchAbortRef.current?.abort(), []);
 
@@ -5517,7 +5976,7 @@ function PurchasesPage() {
 
       setPaymentAccounts([...cashAccounts, ...bankAccounts]);
     } catch {
-      toast.error("داده خریداری از API خوانده نشد");
+      toast.error("داده خریداری از سرور خوانده نشد");
       setPurchases([]);
     } finally {
       setIsLoading(false);
@@ -5551,7 +6010,11 @@ function PurchasesPage() {
         replaceLookupOptionsKeepingSelected(
           current,
           rows,
-          purchaseLines.map((line) => line.productId),
+          [
+            ...selectedPurchaseProductIdsRef.current,
+            ...purchaseLines.map((line) => line.productId),
+            purchaseLineDraft.productId,
+          ],
         ),
       );
     } catch (error: any) {
@@ -5809,6 +6272,12 @@ function PurchasesPage() {
 
   const setPurchaseLineProduct = (lineId: string, productId: string) => {
     const product = products.find((item) => item.id === productId);
+    if (!product) {
+      toast.error("محصول انتخاب‌شده دیگر در نتایج جستجو نیست؛ دوباره جستجو کنید");
+      return;
+    }
+    selectedPurchaseProductIdsRef.current = [productId];
+    setProducts((current) => mergeById([product], current));
     const purchaseUnit =
       product?.units?.find((unit: any) => unit.isDefaultPurchase) || product?.units?.[0];
 
@@ -5828,6 +6297,12 @@ function PurchasesPage() {
 
   const setPurchaseDraftProduct = (productId: string) => {
     const product = products.find((item) => item.id === productId);
+    if (!product) {
+      toast.error("محصول انتخاب‌شده دیگر در نتایج جستجو نیست؛ دوباره جستجو کنید");
+      return;
+    }
+    selectedPurchaseProductIdsRef.current = [productId];
+    setProducts((current) => mergeById([product], current));
     const purchaseUnit =
       product?.units?.find((unit: any) => unit.isDefaultPurchase) || product?.units?.[0];
 
@@ -8997,7 +9472,7 @@ function ProductsPage() {
     } catch (error: any) {
       if (error?.name === "AbortError") return;
       if (requestSeq !== productsRequestSeqRef.current) return;
-      toast.error("داده‌های اجناس از API خوانده نشد");
+      toast.error("داده‌های اجناس از سرور خوانده نشد");
       setProducts([]);
     } finally {
       if (requestSeq === productsRequestSeqRef.current) {
@@ -9424,7 +9899,7 @@ function ProductsPage() {
               columns={[
                 { key: "imageUrl", label: "عکس" },
                 { key: "name", label: "نام کالا" },
-                { key: "barcode", label: "بارکود/SKU" },
+                { key: "barcode", label: "بارکود/کد کالا" },
                 { key: "category", label: "کتگوری" },
                 { key: "unit", label: "واحد پایه" },
                 { key: "salePrice", label: "قیمت فروش" },
@@ -10285,7 +10760,7 @@ function InventoryPage() {
       if (error?.name === "AbortError") return;
       if (requestSeq !== inventoryLoadSeqRef.current) return;
 
-      toast.error(error instanceof Error ? error.message : "داده موجودی از API خوانده نشد");
+      toast.error(error instanceof Error ? error.message : "داده موجودی از سرور خوانده نشد");
       const clearRowsByTab = {
         stock: setStockRows,
         opening: setOpeningRows,
@@ -11127,7 +11602,7 @@ function InventoryPage() {
             <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
               <div>جنس: {String(openingEdit?.product || "-")}</div>
               <div>گدام: {String(openingEdit?.warehouse || "-")}</div>
-              <div>Lot: {String(openingEdit?.lot || "-")}</div>
+              <div>لات: {String(openingEdit?.lot || "-")}</div>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <NumberField
@@ -11253,12 +11728,14 @@ function TextField({
   type = "text",
   onChange,
   fullWidth = false,
+  disabled = false,
 }: {
   label: string;
   value: string;
   type?: string;
   onChange: (value: string) => void;
   fullWidth?: boolean;
+  disabled?: boolean;
 }) {
   const isLongText = type === "textarea" || /یادداشت|شرح|توضیح/.test(label);
 
@@ -11270,6 +11747,7 @@ function TextField({
       {isLongText ? (
         <textarea
           value={value}
+          disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
           rows={4}
           className="min-h-24 rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
@@ -11277,7 +11755,12 @@ function TextField({
       ) : type === "date" ? (
         <ManualDateInput value={value} onChange={onChange} />
       ) : (
-        <Input type={type} value={value} onChange={(event) => onChange(event.target.value)} />
+        <Input
+          type={type}
+          value={value}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+        />
       )}
     </label>
   );
@@ -11587,6 +12070,7 @@ function normalizeRow(item: any, pageTitle = ""): DataRow {
   if (pageTitle === "فروشات") {
     const isCancelled = item.status === "CANCELLED";
     const isPaid = item.paymentStatus === "PAID" || Number(item.remainingAmount || 0) <= 0;
+    const exchangeDocument = item.exchangesAsSource?.[0] || item.exchangesAsReplacement?.[0];
     return {
       id: item.id,
       name: item.invoiceNo || item.id || "-",
@@ -11602,7 +12086,7 @@ function normalizeRow(item: any, pageTitle = ""): DataRow {
             : "هشدار: ثبت نشده",
       __canEdit: !isCancelled,
       __canSecondary: !isCancelled && !isPaid,
-      __canDelete: !isCancelled,
+      __canDelete: !isCancelled && !exchangeDocument,
       ...auditMeta,
     };
   }
@@ -12472,7 +12956,7 @@ const pageConfigs: AdminPageConfig[] = [
   },
   {
     title: "بکاپ",
-    description: "بکاپ منظم، Restore، حذف نسخه‌های اضافی و مسیر ذخیره.",
+    description: "بکاپ منظم، بازگردانی، حذف نسخه‌های اضافی و مسیر ذخیره.",
     endpoint: "/api/backups",
     apiCrud: true,
     canEdit: false,
@@ -12510,7 +12994,7 @@ const pageConfigs: AdminPageConfig[] = [
       { key: "date", label: "تاریخ" },
       { key: "size", label: "حجم" },
     ],
-    note: "بکاپ واقعی به endpoint محلی وصل است؛ Restore فعلا فایل را validate و preview می‌کند تا قبل از workflow کامل دیتابیس، داده‌ها overwrite نشوند.",
+    note: "بکاپ واقعی به سرور محلی وصل است؛ بازگردانی فعلاً فایل را اعتبارسنجی و پیش‌نمایش می‌کند تا پیش از روند کامل دیتابیس، داده‌ها جایگزین نشوند.",
   },
 ];
 

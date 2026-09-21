@@ -83,14 +83,14 @@ export const PosBarcodeInputCard = forwardRef<
 
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <Badge variant={isWsConnected ? "default" : "secondary"}>
-            {isWsConnected ? "Sync فعال" : "HTTP fallback"}
+            {isWsConnected ? "همگام‌سازی فعال" : "اتصال جایگزین"}
           </Badge>
           <span>
             گدام فعال:{" "}
             <span className="font-bold text-foreground">{warehouseName || "-"}</span>
           </span>
           <span>F2 فوکس</span>
-          <span>Enter افزودن</span>
+          <span>افزودن با Enter</span>
         </div>
       </CardContent>
     </Card>

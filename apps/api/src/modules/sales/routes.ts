@@ -225,6 +225,8 @@ salesRoute.get("/", async (c) => {
       include: {
         customer: true,
         currency: true,
+        exchangesAsSource: { select: { exchangeNo: true } },
+        exchangesAsReplacement: { select: { exchangeNo: true } },
         items: {
           include: {
             product: true,
@@ -617,6 +619,8 @@ salesRoute.post("/:id/cancel", async (c) => {
     include: {
       items: true,
       returns: true,
+      exchangesAsSource: { select: { exchangeNo: true } },
+      exchangesAsReplacement: { select: { exchangeNo: true } },
     },
   });
 
@@ -626,6 +630,16 @@ salesRoute.post("/:id/cancel", async (c) => {
 
   if (sale.status === SaleStatus.CANCELLED) {
     return c.json({ message: "Sale is already cancelled" }, 400);
+  }
+
+  const relatedExchange = sale.exchangesAsSource[0] || sale.exchangesAsReplacement[0];
+  if (relatedExchange) {
+    return c.json(
+      {
+        message: `این فروش بخشی از تعویض ${relatedExchange.exchangeNo} است و ابطال جداگانه آن مجاز نیست.`,
+      },
+      409,
+    );
   }
 
   if (sale.returns.some((item) => !item.cancelledAt)) {
@@ -648,6 +662,8 @@ salesRoute.post("/:id/cancel", async (c) => {
       where: { id: sale.id },
       include: {
         returns: true,
+        exchangesAsSource: { select: { exchangeNo: true } },
+        exchangesAsReplacement: { select: { exchangeNo: true } },
         items: {
           include: { lot: true },
         },
@@ -655,6 +671,13 @@ salesRoute.post("/:id/cancel", async (c) => {
     });
     if (!currentSale || currentSale.status === SaleStatus.CANCELLED) {
       throw new Error("این فروش قبلاً ابطال شده است.");
+    }
+    const currentRelatedExchange =
+      currentSale.exchangesAsSource[0] || currentSale.exchangesAsReplacement[0];
+    if (currentRelatedExchange) {
+      throw new Error(
+        `این فروش بخشی از تعویض ${currentRelatedExchange.exchangeNo} است و ابطال جداگانه آن مجاز نیست.`,
+      );
     }
     if (currentSale.returns.some((item) => !item.cancelledAt)) {
       throw new Error("فروش دارای برگشتی فعال است و قابل ابطال نیست.");

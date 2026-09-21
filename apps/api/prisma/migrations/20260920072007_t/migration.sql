@@ -1,0 +1,2 @@
+-- RenameIndex
+ALTER INDEX "InventoryPhysicalCountEntry_sessionProductId_checkpointKey_coun" RENAME TO "InventoryPhysicalCountEntry_sessionProductId_checkpointKey__key";

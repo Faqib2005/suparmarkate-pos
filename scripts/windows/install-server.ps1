@@ -20,6 +20,7 @@ param(
   [string]$Mode = "Docker",
   [string]$BackupDir = "",
   [string]$LanIp = "",
+  [switch]$UpdateLanIp,
   [switch]$SkipStartupRegistration,
   [switch]$ConfirmStableIp,
   [switch]$ConfirmUps,
@@ -48,6 +49,7 @@ if ($Mode -eq "Docker") {
     -RedisPort $RedisPort `
     -BackupDir $BackupDir `
     -LanIp $LanIp `
+    -UpdateLanIp:$UpdateLanIp `
     -ConfirmStableIp:$ConfirmStableIp `
     -ConfirmUps:$ConfirmUps `
     -ConfirmSeparateBackupDisk:$ConfirmSeparateBackupDisk

@@ -103,7 +103,7 @@ export function useAccounting(baseUrl: string) {
 
   async function refresh() {
     if (!baseUrl) {
-      toast.error("API آماده نیست");
+      toast.error("اتصال به سرور آماده نیست");
       return;
     }
 
@@ -202,13 +202,13 @@ export function useAccounting(baseUrl: string) {
     }
 
     if (Math.round((totalDebit - totalCredit) * 10000) / 10000 !== 0) {
-      toast.error("Debit و Credit برابر نیست");
+      toast.error("بدهکار و بستانکار برابر نیستند");
       return;
     }
 
     try {
       await createJournalEntry(baseUrl, {
-        description: input.description || "Manual journal entry",
+        description: input.description || "سند حسابداری دستی",
         sourceType: "MANUAL",
         sourceId: `manual-${Date.now()}`,
         lines: validLines,

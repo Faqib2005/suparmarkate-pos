@@ -302,7 +302,7 @@ export const PosProductSearchCard = forwardRef<
             <SlidersHorizontal className="h-4 w-4" />
           </Button>
           <Badge variant={isWsConnected ? "default" : "secondary"}>
-            {isWsConnected ? "Sync فعال" : "HTTP fallback"}
+            {isWsConnected ? "همگام‌سازی فعال" : "اتصال جایگزین"}
           </Badge>
           <span className="text-xs text-muted-foreground">
             گدام فعال:{" "}

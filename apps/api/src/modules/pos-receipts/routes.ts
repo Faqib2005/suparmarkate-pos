@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import bwipjs from "bwip-js";
 import { prisma } from "../../lib/prisma";
 import { issueReceiptAccess, requireReceiptAccess } from "../../lib/receipt-access";
 import { formatKabulDateTime } from "../../lib/kabul-date";
@@ -147,11 +148,37 @@ posReceiptsRoute.get("/sales/:id/html", async (c) => {
           },
         },
       },
+      exchangesAsSource: {
+        orderBy: { createdAt: "asc" },
+        include: {
+          replacementSale: {
+            include: {
+              items: {
+                include: {
+                  product: true,
+                  warehouse: true,
+                  unit: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      exchangesAsReplacement: {
+        include: {
+          sourceSale: {
+            select: { id: true, invoiceNo: true },
+          },
+          saleReturn: {
+            select: { id: true, returnNo: true },
+          },
+        },
+      },
     },
   });
 
   if (!sale) {
-    return c.html("<h1>Sale not found</h1>", 404);
+    return c.html("<h1>فروش مورد نظر پیدا نشد</h1>", 404);
   }
 
   const setting = await prisma.companySetting.findFirst().catch(() => null);
@@ -171,6 +198,11 @@ posReceiptsRoute.get("/sales/:id/html", async (c) => {
       })),
     ),
   }));
+  const exchangeHistory = sale.exchangesAsSource.map((exchange) => ({
+    ...exchange,
+    receiptItems: groupReceiptItems(exchange.replacementSale.items),
+  }));
+  const replacementExchange = sale.exchangesAsReplacement[0] || null;
 
   const subtotal = receiptItems.reduce((sum, item) => {
     return sum + Number(item.quantity || 0) * Number(item.unitPrice || 0);
@@ -191,12 +223,41 @@ posReceiptsRoute.get("/sales/:id/html", async (c) => {
     0,
   );
   const netSaleTotal = total - returnedTotal;
-  const salePaidAmount = Number((sale as any).paidAmount || total);
+  const exchangeCashPaidAmount = replacementExchange
+    ? Number(replacementExchange.cashPaidAmount || 0)
+    : null;
+  const exchangeCreditApplied = replacementExchange
+    ? Number(replacementExchange.creditApplied || 0)
+    : 0;
+  const exchangeOutstandingAmount = replacementExchange
+    ? Number(replacementExchange.outstandingAmount || 0)
+    : 0;
+  const customerDebtAmount = Math.max(
+    0,
+    replacementExchange ? exchangeOutstandingAmount : Number((sale as any).remainingAmount || 0),
+  );
+  const salePaidAmount = exchangeCashPaidAmount ?? Number((sale as any).paidAmount || total);
   const tenderedAmount = getNoteNumber((sale as any).note, "TenderedAmount") ?? salePaidAmount;
   const changeAmount =
     getNoteNumber((sale as any).note, "ChangeAmount") ??
-    Math.max(0, tenderedAmount - total);
+    (replacementExchange ? 0 : Math.max(0, tenderedAmount - total));
   const receiptNote = getNotePart((sale as any).note, "Note");
+  const receiptReference = String((sale as any).invoiceNo || sale.id);
+  let receiptBarcodeSvg = "";
+
+  try {
+    receiptBarcodeSvg = bwipjs.toSVG({
+      bcid: "code128",
+      text: receiptReference,
+      scale: widthMm === 58 ? 1 : 2,
+      height: widthMm === 58 ? 7 : 9,
+      includetext: false,
+      paddingwidth: 0,
+      paddingheight: 0,
+    });
+  } catch {
+    // A malformed legacy invoice number must never stop receipt printing.
+  }
 
   const currencyLabel = sale.currency?.symbol || sale.currency?.code || "";
   const customerLabel = getCustomerLabel(sale);
@@ -345,11 +406,43 @@ posReceiptsRoute.get("/sales/:id/html", async (c) => {
     }
 
     .receipt-note {
-      margin-top: 8px;
+      margin-top: 5px;
       border: 1px dashed #000;
-      padding: 5px;
-      white-space: pre-wrap;
+      padding: 3px 4px;
+      font-size: ${widthMm === 58 ? "8px" : "10px"};
+      line-height: 1.3;
       overflow-wrap: anywhere;
+    }
+
+    .receipt-note strong,
+    .receipt-note div {
+      display: inline;
+    }
+
+    .receipt-note div {
+      white-space: pre-wrap;
+    }
+
+    .receipt-barcode {
+      margin-top: 7px;
+      border-top: 1px dashed #000;
+      padding-top: 5px;
+      text-align: center;
+    }
+
+    .receipt-barcode svg {
+      display: block;
+      width: 100%;
+      height: ${widthMm === 58 ? "30px" : "38px"};
+      margin: 0 auto;
+    }
+
+    .receipt-barcode-label {
+      direction: ltr;
+      margin-top: 1px;
+      font-family: Tahoma, Arial, sans-serif;
+      font-size: ${widthMm === 58 ? "7px" : "8px"};
+      letter-spacing: 0;
     }
 
     .footer {
@@ -450,6 +543,39 @@ posReceiptsRoute.get("/sales/:id/html", async (c) => {
     </div>
 
     ${
+      customerDebtAmount > 0
+        ? `
+    <div class="row total-row">
+      <span>مبلغ قرض مشتری:</span>
+      <strong>${money(customerDebtAmount)} ${safeText(currencyLabel)}</strong>
+    </div>
+    `
+        : ""
+    }
+
+    ${
+      replacementExchange && exchangeCreditApplied > 0
+        ? `
+    <div class="row">
+      <span>اعتبار برگشتی استفاده‌شده:</span>
+      <strong>${money(exchangeCreditApplied)} ${safeText(currencyLabel)}</strong>
+    </div>
+    `
+        : ""
+    }
+
+    ${
+      replacementExchange
+        ? `
+    <div class="row total-row">
+      <span>باقی پس از کسر اعتبار برگشتی:</span>
+      <strong>${money(exchangeOutstandingAmount)} ${safeText(currencyLabel)}</strong>
+    </div>
+    `
+        : ""
+    }
+
+    ${
       returnedTotal > 0
         ? `
     <div class="row">
@@ -489,8 +615,8 @@ posReceiptsRoute.get("/sales/:id/html", async (c) => {
   ${receiptReturns
     .map(
       (saleReturn) => `
-    <div class="return-meta row">
-      <span>سند: ${safeText(saleReturn.returnNo || saleReturn.id)}</span>
+    <div class="return-meta">
+     
       <span>${formatKabulDateTime(saleReturn.createdAt)}</span>
     </div>
     <table>
@@ -533,11 +659,95 @@ posReceiptsRoute.get("/sales/:id/html", async (c) => {
   }
 
   ${
+    exchangeHistory.length > 0
+      ? `
+  <div class="section-title">اقلام جدید در تعویض فروش</div>
+  ${exchangeHistory
+    .map(
+      (exchange) => `
+    <div class="return-meta ">
+   
+    <span> فاکتور جدید:</span>
+    <span> ${safeText(exchange.replacementSale.invoiceNo || exchange.replacementSale.id)}</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>محصول</th>
+          <th>تعداد</th>
+          <th>قیمت</th>
+          <th>جمع</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${exchange.receiptItems
+          .map((item) => {
+            const qty = Number(item.quantity || 0);
+            const price = Number(item.unitPrice || 0);
+            const lineTotal = Number(item.netTotalPrice ?? item.totalPrice ?? 0);
+            return `
+              <tr>
+                <td><div class="product-name">${safeText(item.product?.name || "-")}</div></td>
+                <td>${money(qty)} ${safeText(item.unit?.shortName || item.unit?.name || "-")}</td>
+                <td>${money(price)}</td>
+                <td>${money(lineTotal)}</td>
+              </tr>
+            `;
+          })
+          .join("")}
+      </tbody>
+    </table>
+    <div class="row">
+      <span>جمع فروش جایگزین:</span>
+      <strong>${money(exchange.replacementSale.total)} ${safeText(currencyLabel)}</strong>
+    </div>
+    <div class="row">
+      <span>پرداخت نقدی/بانکی جدید:</span>
+      <strong>${money(exchange.cashPaidAmount)} ${safeText(currencyLabel)}</strong>
+    </div>
+    <div class="row">
+      <span>اعتبار برگشتی مصرف‌شده:</span>
+      <strong>${money(exchange.creditApplied)} ${safeText(currencyLabel)}</strong>
+    </div>
+    <div class="row">
+      <span>باقی پس از کسر اعتبار برگشتی:</span>
+      <strong>${money(exchange.outstandingAmount)} ${safeText(currencyLabel)}</strong>
+    </div>
+  `,
+    )
+    .join("")}
+  `
+      : ""
+  }
+
+  ${
+    replacementExchange
+      ? `
+  <div class="receipt-note">
+    <strong>مرجع تعویض:</strong>
+    <div>تعویض ${safeText(replacementExchange.exchangeNo)} از فاکتور ${safeText(replacementExchange.sourceSale.invoiceNo || replacementExchange.sourceSale.id)} / سند برگشت ${safeText(replacementExchange.saleReturn.returnNo || replacementExchange.saleReturn.id)}</div>
+  </div>
+  `
+      : ""
+  }
+
+  ${
     receiptNote
       ? `
   <div class="receipt-note">
     <strong>یادداشت:</strong>
     <div>${safeText(receiptNote)}</div>
+  </div>
+  `
+      : ""
+  }
+
+  ${
+    receiptBarcodeSvg
+      ? `
+  <div class="receipt-barcode">
+    ${receiptBarcodeSvg}
+    <div class="receipt-barcode-label">${safeText(receiptReference)}</div>
   </div>
   `
       : ""

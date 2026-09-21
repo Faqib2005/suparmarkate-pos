@@ -17,7 +17,7 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
   const json = await res.json().catch(() => null);
 
   if (!res.ok) {
-    throw new Error(json?.message || json?.error?.message || "Request failed");
+    throw new Error(json?.message || json?.error?.message || "درخواست انجام نشد. لطفاً دوباره کوشش کنید.");
   }
 
   return json;

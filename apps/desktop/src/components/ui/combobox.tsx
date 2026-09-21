@@ -90,18 +90,20 @@ export function Combobox({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const remoteSearchTimerRef = useRef<number | null>(null);
+  const [lastSelectedOption, setLastSelectedOption] =
+    useState<ComboboxOption | null>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [panelStyle, setPanelStyle] = useState<CSSProperties>({});
 
-  const selected = options.find((option) => option.value === value) || null;
+  const selected =
+    options.find((option) => option.value === value) ||
+    (lastSelectedOption?.value === value ? lastSelectedOption : null);
   const normalizedQuery = normalizeSearchText(query);
   const normalizedBarcodeQuery = normalizeBarcodeText(query);
   const filteredOptions = useMemo(
     () =>
-      onSearchChange
-        ? options
-        : normalizedQuery
+      normalizedQuery
         ? options.filter((option) => {
             const haystack = [
               option.label,
@@ -123,7 +125,7 @@ export function Combobox({
             );
           })
         : options,
-    [normalizedBarcodeQuery, normalizedQuery, onSearchChange, options],
+    [normalizedBarcodeQuery, normalizedQuery, options],
   );
   const optionVirtualizer = useVirtualizer({
     count: filteredOptions.length,
@@ -158,6 +160,20 @@ export function Combobox({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!value) {
+      setLastSelectedOption(null);
+      return;
+    }
+
+    const option = options.find((item) => item.value === value);
+    if (option) {
+      setLastSelectedOption((current) =>
+        current?.value === option.value ? current : option,
+      );
+    }
+  }, [options, value]);
 
   useEffect(() => {
     if (!open) return;
@@ -260,10 +276,13 @@ export function Combobox({
                           window.clearTimeout(remoteSearchTimerRef.current);
                           remoteSearchTimerRef.current = null;
                         }
+                        // Stop an in-flight remote search before it can replace the
+                        // selected product with an older result set.
+                        setLastSelectedOption(option);
+                        onSearchChange?.("");
                         onValueChange(option.value);
                         setOpen(false);
                         setQuery("");
-                        onSearchChange?.("");
                       }}
                     >
                       <span className="min-w-0">

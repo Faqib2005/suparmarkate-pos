@@ -23,6 +23,7 @@ import {
 
 export const posRoute = new Hono();
 const posWebSocketPort = process.env.POS_WS_PORT || "4001";
+const publicPosWebSocketPort = process.env.PUBLIC_POS_WS_PORT || posWebSocketPort;
 
 const createSessionSchema = z.object({
   name: z.string().trim().max(120).optional().nullable()
@@ -56,8 +57,8 @@ function getBaseUrls(c: any, sessionId: string) {
   const hostname = publicUrl.hostname;
   const wsProtocol = publicUrl.protocol === "https:" ? "wss" : "ws";
 
-  const mobileWebSocketUrl = `${wsProtocol}://${hostname}:${posWebSocketPort}?sessionId=${sessionId}&clientType=mobile`;
-  const desktopWebSocketUrl = `${wsProtocol}://${hostname}:${posWebSocketPort}?sessionId=${sessionId}&clientType=desktop`;
+  const mobileWebSocketUrl = `${wsProtocol}://${hostname}:${publicPosWebSocketPort}?sessionId=${sessionId}&clientType=mobile`;
+  const desktopWebSocketUrl = `${wsProtocol}://${hostname}:${publicPosWebSocketPort}?sessionId=${sessionId}&clientType=desktop`;
   const scanHttpUrl = `${apiBaseUrl}/api/pos/scan`;
 
   const qrPayload = JSON.stringify({

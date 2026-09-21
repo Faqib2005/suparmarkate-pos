@@ -82,8 +82,8 @@ export function LedgerViewer({
                 <TableHead>شماره</TableHead>
                 <TableHead>شرح</TableHead>
                 <TableHead>حساب/طرف</TableHead>
-                <TableHead>Debit</TableHead>
-                <TableHead>Credit</TableHead>
+                <TableHead>بدهکار</TableHead>
+                <TableHead>بستانکار</TableHead>
                 <TableHead>مانده</TableHead>
               </TableRow>
             </TableHeader>
