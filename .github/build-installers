@@ -7,139 +7,139 @@ on:
       - "v*"
 
 jobs:
-  # quality-gates:
-  #   name: Production Quality Gates
-  #   runs-on: ubuntu-latest
-  #   services:
-  #     postgres:
-  #       image: postgres:16-alpine
-  #       env:
-  #         POSTGRES_USER: supermarket_test
-  #         POSTGRES_PASSWORD: supermarket_test
-  #         POSTGRES_DB: supermarket_test
-  #       ports:
-  #         - 5432:5432
-  #       options: >-
-  #         --health-cmd "pg_isready -U supermarket_test -d supermarket_test"
-  #         --health-interval 5s
-  #         --health-timeout 5s
-  #         --health-retries 20
-  #     redis:
-  #       image: redis:7-alpine
-  #       ports:
-  #         - 6379:6379
-  #       options: >-
-  #         --health-cmd "redis-cli ping"
-  #         --health-interval 5s
-  #         --health-timeout 5s
-  #         --health-retries 20
-  #   env:
-  #     DATABASE_URL: postgresql://supermarket_test:supermarket_test@127.0.0.1:5432/supermarket_test
-  #     REDIS_URL: redis://127.0.0.1:6379
-  #     REDIS_ENABLED: "true"
-  #     JWT_SECRET: test-only-github-actions-secret
-  #     NODE_ENV: test
-  #     BACKUP_SCHEDULE_ENABLED: "false"
-  #     BACKUP_DIR: /tmp/muhaseb-backup-integration
-  #     UPLOAD_DIR: /tmp/muhaseb-upload-integration
-  #     SERVER_CONFIG_PATH: /tmp/muhaseb-server-config-test.json
-  #     BACKUP_UPLOADS_ENABLED: "true"
-  #     RUN_BACKUP_INTEGRATION: "true"
-  #     PG_DOCKER_FALLBACK: "false"
-  #     STOCK_RECONCILIATION_ENABLED: "false"
-  #     JOB_WORKER_ENABLED: "false"
-  #     PERMISSION_ENFORCEMENT_MODE: "enforce"
-  #     ALLOW_LEGACY_PUBLIC_RECEIPTS: "false"
-  #     ALLOW_LEGACY_PUBLIC_ATTENDANCE_SCAN: "false"
+  quality-gates:
+    name: Production Quality Gates
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: supermarket_test
+          POSTGRES_PASSWORD: supermarket_test
+          POSTGRES_DB: supermarket_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U supermarket_test -d supermarket_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://supermarket_test:supermarket_test@127.0.0.1:5432/supermarket_test
+      REDIS_URL: redis://127.0.0.1:6379
+      REDIS_ENABLED: "true"
+      JWT_SECRET: test-only-github-actions-secret
+      NODE_ENV: test
+      BACKUP_SCHEDULE_ENABLED: "false"
+      BACKUP_DIR: /tmp/muhaseb-backup-integration
+      UPLOAD_DIR: /tmp/muhaseb-upload-integration
+      SERVER_CONFIG_PATH: /tmp/muhaseb-server-config-test.json
+      BACKUP_UPLOADS_ENABLED: "true"
+      RUN_BACKUP_INTEGRATION: "true"
+      PG_DOCKER_FALLBACK: "false"
+      STOCK_RECONCILIATION_ENABLED: "false"
+      JOB_WORKER_ENABLED: "false"
+      PERMISSION_ENFORCEMENT_MODE: "enforce"
+      ALLOW_LEGACY_PUBLIC_RECEIPTS: "false"
+      ALLOW_LEGACY_PUBLIC_ATTENDANCE_SCAN: "false"
 
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  #     - name: Setup Node.js
-  #       uses: actions/setup-node@v4
-  #       with:
-  #         node-version: "22"
-  #         cache: npm
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
 
-  #     - name: Install dependencies
-  #       run: npm ci
+      - name: Install dependencies
+        run: npm ci
 
-  #     - name: Audit production API dependencies
-  #       run: npm audit --workspace @supermarket/api --omit=dev --omit=optional --audit-level=high
+      - name: Audit production API dependencies
+        run: npm audit --workspace @supermarket/api --omit=dev --omit=optional --audit-level=high
 
-  #     - name: Audit production Desktop and Web dependencies
-  #       run: npm audit --workspace @supermarket/desktop --omit=dev --audit-level=high
+      - name: Audit production Desktop and Web dependencies
+        run: npm audit --workspace @supermarket/desktop --omit=dev --audit-level=high
 
-  #     - name: Report Mobile toolchain vulnerabilities
-  #       continue-on-error: true
-  #       run: |
-  #         npm audit --workspace mobile-scanner --omit=dev --audit-level=high
-  #         echo "::warning::Mobile audit is report-only until the separately tested Expo SDK 57 migration is complete."
+      - name: Report Mobile toolchain vulnerabilities
+        continue-on-error: true
+        run: |
+          npm audit --workspace mobile-scanner --omit=dev --audit-level=high
+          echo "::warning::Mobile audit is report-only until the separately tested Expo SDK 57 migration is complete."
 
-  #     - name: Generate Prisma client
-  #       run: npm run prisma:generate
+      - name: Generate Prisma client
+        run: npm run prisma:generate
 
-  #     - name: Validate Prisma schema
-  #       run: npm --workspace @supermarket/api run prisma -- validate
+      - name: Validate Prisma schema
+        run: npm --workspace @supermarket/api run prisma -- validate
 
-  #     - name: Deploy migrations to isolated database
-  #       run: npm run prisma:deploy
+      - name: Deploy migrations to isolated database
+        run: npm run prisma:deploy
 
-  #     - name: Seed isolated database
-  #       run: npm --workspace @supermarket/api run seed
+      - name: Seed isolated database
+        run: npm --workspace @supermarket/api run seed
 
-  #     - name: Run unit tests
-  #       run: npm run test:unit
+      - name: Run unit tests
+        run: npm run test:unit
 
-  #     - name: Install PostgreSQL client tools
-  #       run: |
-  #         sudo apt-get update
-  #         sudo apt-get install -y postgresql-client
-  #         pg_dump --version
-  #         pg_restore --version
+      - name: Install PostgreSQL client tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          pg_dump --version
+          pg_restore --version
 
-  #     - name: Run database integration tests
-  #       run: npm run test:integration
+      - name: Run database integration tests
+        run: npm run test:integration
 
-  #     - name: Run integrity baseline
-  #       run: npm run integrity:audit -- --label ci --output ../../artifacts/release-gates/ci-integrity.json
+      - name: Run integrity baseline
+        run: npm run integrity:audit -- --label ci --output ../../artifacts/release-gates/ci-integrity.json
 
-  #     - name: Typecheck all workspaces
-  #       run: npm run typecheck
+      - name: Typecheck all workspaces
+        run: npm run typecheck
 
-  #     - name: Build API and Web
-  #       run: npm run build
+      - name: Build API and Web
+        run: npm run build
 
-  #     - name: Validate Android Expo bundle
-  #       working-directory: apps/mobile-scanner
-  #       run: |
-  #         npx expo install --check
-  #         npx expo export --platform android --output-dir ../../artifacts/mobile-export
+      - name: Validate Android Expo bundle
+        working-directory: apps/mobile-scanner
+        run: |
+          npx expo install --check
+          npx expo export --platform android --output-dir ../../artifacts/mobile-export
 
-  #     - name: Install Playwright Chromium
-  #       run: npx playwright install --with-deps chromium
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
 
-  #     - name: Run Web smoke tests
-  #       run: npm run test:web
+      - name: Run Web smoke tests
+        run: npm run test:web
 
-  #     - name: Create release manifest
-  #       run: npm run release:manifest -- --phase ci --output ../../artifacts/release-gates/ci-manifest.json
+      - name: Create release manifest
+        run: npm run release:manifest -- --phase ci --output ../../artifacts/release-gates/ci-manifest.json
 
-  #     - name: Upload quality artifacts
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: Muhaseb-Quality-Gates
-  #         path: |
-  #           artifacts/release-gates/*.json
-  #           playwright-report/**
-  #           test-results/**
-  #         if-no-files-found: warn
+      - name: Upload quality artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Muhaseb-Quality-Gates
+          path: |
+            artifacts/release-gates/*.json
+            playwright-report/**
+            test-results/**
+          if-no-files-found: warn
 
   desktop-windows:
     name: Desktop Windows Installer
     runs-on: windows-latest
-    # needs: quality-gates
+    needs: quality-gates
     env:
       DATABASE_URL: postgresql://supermarket:supermarket_password@localhost:5432/supermarket_db
       CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
@@ -202,7 +202,7 @@ jobs:
   mobile-android:
     name: Mobile Android APK
     runs-on: ubuntu-latest
-    # needs: quality-gates
+    needs: quality-gates
     env:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
@@ -255,7 +255,7 @@ jobs:
   server-docker-bundle:
     name: Server Docker Bundle
     runs-on: ubuntu-latest
-    # needs: quality-gates
+    needs: quality-gates
 
     steps:
       - name: Checkout
