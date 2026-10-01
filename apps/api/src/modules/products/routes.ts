@@ -1278,15 +1278,17 @@ productsRoute.patch("/:id", async (c) => {
         const nextRates = new Map(
           units.map((unit) => [unit.unitId, Number(unit.conversionRate)])
         );
+
+        
         for (const unitId of usedUnitIds) {
           if (unitId === existing.baseUnitId) continue;
           const previousRate = existingRates.get(unitId);
           const nextRate = nextRates.get(unitId);
-          if (previousRate === undefined || nextRate === undefined || previousRate !== nextRate) {
-            throw new Error(
-              "نرخ تبدیل واحد استفاده‌شده در معاملات قابل تغییر یا حذف نیست؛ واحد بسته‌بندی جدید بسازید."
-            );
-          }
+          // if (previousRate === undefined || nextRate === undefined || previousRate !== nextRate) {
+          //   throw new Error(
+          //     "نرخ تبدیل واحد استفاده‌شده در معاملات قابل تغییر یا حذف نیست؛ واحد بسته‌بندی جدید بسازید."
+          //   );
+          // }
         }
       }
 

@@ -1,0 +1,201 @@
+name: ${COMPOSE_PROJECT_NAME:-muhaseb-server}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-supermarket}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-supermarket_password}
+      POSTGRES_DB: ${POSTGRES_DB:-supermarket_db}
+
+    volumes:
+      - supermarket_postgres_data:/var/lib/postgresql/data
+
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+    stop_grace_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lfu
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "ping"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    environment:
+      NODE_ENV: production
+
+      DATABASE_URL: postgresql://${POSTGRES_USER:-supermarket}:${POSTGRES_PASSWORD:-supermarket_password}@postgres:5432/${POSTGRES_DB:-supermarket_db}
+
+      PORT: 4000
+      POS_WS_PORT: 4001
+      SYSTEM_HEALTH_WS_PORT: 4002
+
+      PUBLIC_POS_WS_PORT: ${HOST_POS_WS_PORT:-4001}
+      PUBLIC_SYSTEM_HEALTH_WS_PORT: ${HOST_SYSTEM_HEALTH_WS_PORT:-4002}
+
+      BUSINESS_TIME_ZONE: Asia/Kabul
+
+      WEB_APP_ENABLED: ${WEB_APP_ENABLED:-true}
+      WEB_DIST_DIR: /app/apps/desktop/dist
+
+      JWT_SECRET: ${JWT_SECRET}
+
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+
+      LAN_API_BASE_URL: ${LAN_API_BASE_URL:-}
+      PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-}
+
+      SERVER_LAN_IP: ${MUHASEB_SERVER_LAN_IP:-}
+      CURRENT_SERVER_LAN_IP: ${MUHASEB_CURRENT_LAN_IP:-}
+
+      REDIS_ENABLED: "true"
+      REDIS_URL: redis://redis:6379
+
+      PERMISSION_ENFORCEMENT_MODE: ${PERMISSION_ENFORCEMENT_MODE:-observe}
+
+      LOGIN_RATE_LIMIT_ATTEMPTS: ${LOGIN_RATE_LIMIT_ATTEMPTS:-5}
+      LOGIN_RATE_LIMIT_IP_ATTEMPTS: ${LOGIN_RATE_LIMIT_IP_ATTEMPTS:-30}
+      LOGIN_RATE_LIMIT_WINDOW_SECONDS: ${LOGIN_RATE_LIMIT_WINDOW_SECONDS:-900}
+
+      ALLOW_LEGACY_PUBLIC_RECEIPTS: ${ALLOW_LEGACY_PUBLIC_RECEIPTS:-true}
+      RECEIPT_TOKEN_TTL_SECONDS: ${RECEIPT_TOKEN_TTL_SECONDS:-180}
+
+      ALLOW_LEGACY_PUBLIC_ATTENDANCE_SCAN: ${ALLOW_LEGACY_PUBLIC_ATTENDANCE_SCAN:-true}
+
+      BACKUP_DIR: /data/backups
+      BACKUP_HOST_DIR: /data/backups
+
+      BACKUP_SCHEDULE_ENABLED: ${BACKUP_SCHEDULE_ENABLED:-true}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-7}
+
+      SERVER_CONFIG_PATH: /data/server-config.json
+
+      BACKUP_UPLOADS_ENABLED: "true"
+
+      PG_DUMP_PATH: pg_dump
+      PG_RESTORE_PATH: pg_restore
+      PG_PSQL_PATH: psql
+      PG_DOCKER_FALLBACK: "false"
+
+      API_SLOW_REQUEST_MS: ${API_SLOW_REQUEST_MS:-750}
+
+      DISK_WARNING_PERCENT: ${DISK_WARNING_PERCENT:-15}
+      CPU_WARNING_PERCENT: ${CPU_WARNING_PERCENT:-85}
+      CPU_CRITICAL_PERCENT: ${CPU_CRITICAL_PERCENT:-95}
+
+      MEMORY_WARNING_FREE_PERCENT: ${MEMORY_WARNING_FREE_PERCENT:-15}
+      MEMORY_CRITICAL_FREE_PERCENT: ${MEMORY_CRITICAL_FREE_PERCENT:-5}
+
+      STOCK_RECONCILIATION_ENABLED: ${STOCK_RECONCILIATION_ENABLED:-true}
+      STOCK_RECONCILIATION_INTERVAL_HOURS: ${STOCK_RECONCILIATION_INTERVAL_HOURS:-24}
+
+      JOB_WORKER_ENABLED: ${JOB_WORKER_ENABLED:-true}
+      JOB_WORKER_POLL_MS: ${JOB_WORKER_POLL_MS:-2000}
+
+      IDEMPOTENCY_FALLBACK_WINDOW_MS: ${IDEMPOTENCY_FALLBACK_WINDOW_MS:-3000}
+      IDEMPOTENCY_RECORD_TTL_DAYS: ${IDEMPOTENCY_RECORD_TTL_DAYS:-30}
+      IDEMPOTENCY_PROCESSING_WAIT_MS: ${IDEMPOTENCY_PROCESSING_WAIT_MS:-15000}
+      IDEMPOTENCY_MAX_RESPONSE_BYTES: ${IDEMPOTENCY_MAX_RESPONSE_BYTES:-2097152}
+
+      PRISMA_TRANSACTION_MAX_WAIT_MS: ${PRISMA_TRANSACTION_MAX_WAIT_MS:-15000}
+      PRISMA_TRANSACTION_TIMEOUT_MS: ${PRISMA_TRANSACTION_TIMEOUT_MS:-30000}
+
+      RETENTION_INTERVAL_HOURS: ${RETENTION_INTERVAL_HOURS:-24}
+
+      AUDIT_LOG_RETENTION_DAYS: ${AUDIT_LOG_RETENTION_DAYS:-730}
+      QR_TOKEN_RETENTION_DAYS: ${QR_TOKEN_RETENTION_DAYS:-30}
+      SESSION_RETENTION_DAYS: ${SESSION_RETENTION_DAYS:-30}
+      JOB_RETENTION_DAYS: ${JOB_RETENTION_DAYS:-30}
+      EXPORT_RETENTION_DAYS: ${EXPORT_RETENTION_DAYS:-7}
+
+      EXPORT_DIR: /data/exports
+
+      BACKUP_MAX_AGE_HOURS: ${BACKUP_MAX_AGE_HOURS:-30}
+      RECONCILIATION_MAX_AGE_HOURS: ${RECONCILIATION_MAX_AGE_HOURS:-36}
+
+      PARTITION_WARNING_ROWS: ${PARTITION_WARNING_ROWS:-10000000}
+
+      DHCP_RESERVATION_CONFIRMED: ${DHCP_RESERVATION_CONFIRMED:-false}
+      UPS_CONFIRMED: ${UPS_CONFIRMED:-false}
+      BACKUP_SECOND_DISK_CONFIRMED: ${BACKUP_SECOND_DISK_CONFIRMED:-false}
+
+      SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME:-admin}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD}
+
+    ports:
+      - "${HOST_API_PORT:-4000}:4000"
+      - "${HOST_POS_WS_PORT:-4001}:4001"
+      - "${HOST_SYSTEM_HEALTH_WS_PORT:-4002}:4002"
+
+    volumes:
+      - muhaseb_api_data:/data
+      - muhaseb_backup_data:/data/backups
+      - muhaseb_uploads:/app/apps/api/uploads
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+    stop_grace_period: 30s
+
+volumes:
+  supermarket_postgres_data:
+  muhaseb_api_data:
+  muhaseb_backup_data:
+  muhaseb_uploads:
